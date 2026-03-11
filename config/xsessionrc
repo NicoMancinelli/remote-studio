@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# Disable overlay scrollbars for remote sessions
+export GTK_OVERLAY_SCROLLING=0
+
+# Path to the display state file
+STATE_FILE="$HOME/.res_state"
+
+# 1. Restore the last known good display state if it exists
+if [ -f "$STATE_FILE" ]; then
+    read width height scaling text_scale cursor label < "$STATE_FILE"
+    
+    # Clean the label (remove quotes)
+    label=$(echo $label | tr -d "'")
+    
+    # Re-apply the resolution, scaling, and cursor
+    OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
+    if [ -n "$OUTPUT" ]; then
+        MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
+        MODE_NAME=$(echo "$MODE_INFO" | awk '{print $2}' | tr -d '"')
+        
+        if ! xrandr | grep -q "$MODE_NAME"; then
+            xrandr --newmode "$MODE_NAME" $(echo "$MODE_INFO" | cut -d' ' -f3-) 2>/dev/null
+        fi
+        xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
+        xrandr --output "$OUTPUT" --mode "$MODE_NAME"
+        
+        # Apply UI settings
+        gsettings set org.cinnamon.desktop.interface scaling-factor "$scaling" 2>/dev/null
+        gsettings set org.cinnamon.desktop.interface text-scaling-factor "$text_scale" 2>/dev/null
+        gsettings set org.cinnamon.desktop.interface cursor-size "$cursor" 2>/dev/null
+        
+        # Set DPI for non-GTK apps
+        dpi=$(echo "96 * $scaling" | bc)
+        echo "Xft.dpi: $dpi" | xrdb -merge
+    fi
+fi
