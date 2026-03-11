@@ -79,32 +79,76 @@ do_action() {
     case "$1" in
         speed) status=$(gsettings get org.cinnamon desktop-effects)
                if [ "$status" == "true" ]; then
-                   # Save wallpaper before disabling
                    gsettings get org.cinnamon.desktop.background picture-uri > "$WALLPAPER_BACKUP" 2>/dev/null
                    gsettings set org.cinnamon desktop-effects false; gsettings set org.cinnamon.desktop.interface enable-animations false
                    gsettings set org.cinnamon.desktop.background picture-options "none"; gsettings set org.cinnamon.desktop.background primary-color "#000000"
+                   log_event "Speed mode: ON"
                else
                    gsettings set org.cinnamon desktop-effects true; gsettings set org.cinnamon.desktop.interface enable-animations true
                    gsettings set org.cinnamon.desktop.background picture-options "zoom"
-                   # Restore wallpaper if saved
                    if [ -f "$WALLPAPER_BACKUP" ]; then
                        gsettings set org.cinnamon.desktop.background picture-uri "$(cat "$WALLPAPER_BACKUP")"
                        rm -f "$WALLPAPER_BACKUP"
                    fi
+                   log_event "Speed mode: OFF"
                fi ;;
         theme) cur=$(gsettings get org.cinnamon.desktop.interface gtk-theme | tr -d "'")
-               [[ "$cur" == *"Dark"* ]] && gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y" || gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark" ;;
-        night) gamma=$(xgamma 2>&1 | awk '{print $4}'); [[ "$gamma" == "1.000" ]] && xgamma -rgamma 1.0 -ggamma 0.8 -bgamma 0.6 || xgamma -gamma 1.0 ;;
+               if [[ "$cur" == *"Dark"* ]]; then
+                   gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y"; log_event "Theme: Light"
+               else
+                   gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark"; log_event "Theme: Dark"
+               fi ;;
+        night) gamma=$(xgamma 2>&1 | awk '{print $4}')
+               if [[ "$gamma" == "1.000" ]]; then
+                   xgamma -rgamma 1.0 -ggamma 0.8 -bgamma 0.6; log_event "Night shift: ON"
+               else
+                   xgamma -gamma 1.0; log_event "Night shift: OFF"
+               fi ;;
         caf)   cur=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled)
-               [[ "$cur" == "true" ]] && gsettings set org.cinnamon.desktop.screensaver lock-enabled false || gsettings set org.cinnamon.desktop.screensaver lock-enabled true ;;
-        privacy) cinnamon-screensaver-command -l; xset dpms force off ;;
+               if [[ "$cur" == "true" ]]; then
+                   gsettings set org.cinnamon.desktop.screensaver lock-enabled false; log_event "Caffeine: ON"
+               else
+                   gsettings set org.cinnamon.desktop.screensaver lock-enabled true; log_event "Caffeine: OFF"
+               fi ;;
+        privacy) cinnamon-screensaver-command -l; xset dpms force off; log_event "Privacy shield activated" ;;
         clip)  echo -n "" | xclip -selection primary; echo -n "" | xclip -selection clipboard ;;
-        service) sudo systemctl restart rustdesk ;;
+        service) sudo systemctl restart rustdesk; log_event "RustDesk service restarted" ;;
         audio) pulseaudio -k; sleep 1; pulseaudio --start ;;
         keys)  setxkbmap us ;;
-        fix)   do_action clip; do_action audio; do_action keys ;;
+        fix)   do_action clip; do_action audio; do_action keys; log_event "Fix all: clip+audio+keys" ;;
         reset) apply_all 1024 768 1 1.0 24 "Reset" ;;
     esac
+}
+
+show_help() {
+    echo "Remote Studio - RustDesk display management"
+    echo ""
+    echo "Usage: res [command]"
+    echo ""
+    echo "Device Profiles:"
+    for key in "${!PROFILES[@]}"; do
+        IFS='|' read -r label width height scaling _ _ <<< "${PROFILES[$key]}"
+        printf "  %-12s %s (%dx%d @%sx)\n" "$key" "$label" "$width" "$height" "$scaling"
+    done
+    echo ""
+    echo "Actions:"
+    echo "  speed        Toggle performance mode (animations/wallpaper)"
+    echo "  theme        Toggle OLED dark/light theme"
+    echo "  night        Toggle night shift (warm gamma)"
+    echo "  caf          Toggle caffeine (disable screen lock)"
+    echo "  privacy      Lock screen + blank monitor"
+    echo "  fix          Fix clipboard + audio + keyboard"
+    echo "  clip         Flush clipboard only"
+    echo "  audio        Restart PulseAudio only"
+    echo "  keys         Reset keyboard layout (US)"
+    echo "  service      Restart RustDesk service (sudo)"
+    echo "  reset        Reset to 1024x768"
+    echo ""
+    echo "Info:"
+    echo "  status       Print system stats (pipe-delimited)"
+    echo "  help         Show this help"
+    echo ""
+    echo "No arguments launches the interactive TUI."
 }
 
 # ------------------------------------------------------------------------------
@@ -116,7 +160,9 @@ if [ -n "$1" ]; then
         mac|ipad|iphonel|iphonep) apply_profile "$1" ;;
         status) get_stats; net=$(get_net_speed); cur="NONE"; [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
                 echo "$cur | $TEMP | $PING_STAT | $USERS | $RAM | $THERMAL_ALERT | $net | $IP_ADDR" ;;
-        *) do_action "$1" ;;
+        help|-h|--help) show_help ;;
+        speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
+        *) echo "Unknown command: $1"; echo "Run 'res help' for usage."; exit 1 ;;
     esac
     exit 0
 fi

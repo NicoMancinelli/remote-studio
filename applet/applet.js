@@ -7,6 +7,7 @@ const St = imports.gi.St;
 
 const RES_CMD = "/usr/local/bin/res";
 const STATUS_FILE = "/tmp/res_status";
+const STATE_FILE = GLib.get_home_dir() + "/.res_state";
 
 function MyApplet(metadata, orientation, panel_height, instance_id) {
     this._init(metadata, orientation, panel_height, instance_id);
@@ -27,6 +28,7 @@ MyApplet.prototype = {
         this.menuManager.addMenu(this.menu);
 
         this.lastUserCount = 0;
+        this._currentMode = "";
         this._timeout = null;
         this._readTimeout = null;
         this._scheduleUpdate();
@@ -34,7 +36,6 @@ MyApplet.prototype = {
     },
 
     _scheduleUpdate: function() {
-        // Clear any existing timer to prevent stacking
         if (this._timeout) Mainloop.source_remove(this._timeout);
         if (this._readTimeout) Mainloop.source_remove(this._readTimeout);
 
@@ -51,6 +52,17 @@ MyApplet.prototype = {
             this._scheduleUpdate();
             return false;
         });
+    },
+
+    _getCurrentMode: function() {
+        try {
+            let [res, contents] = GLib.file_get_contents(STATE_FILE);
+            if (res) {
+                let parts = contents.toString().trim().match(/'([^']+)'/);
+                return parts ? parts[1] : "";
+            }
+        } catch(e) {}
+        return "";
     },
 
     _readStatus: function() {
@@ -73,27 +85,46 @@ MyApplet.prototype = {
             this.lastUserCount = userCount;
 
             this.set_applet_label(alerts + label + user_icon);
-            this.set_applet_tooltip("Remote Studio\nIP: " + info[7] + "\nLatency: " + info[2] + "\nTraffic: " + info[6]);
+            this.set_applet_tooltip(
+                "Remote Studio" +
+                "\nMode: " + label +
+                "\nTemp: " + info[1] +
+                "\nRAM: " + info[4] +
+                "\nIP: " + info[7] +
+                "\nLatency: " + info[2] +
+                "\nTraffic: " + info[6]
+            );
         } catch(e) {
-            // Status file not ready yet, skip
+            // Status file not ready yet
         }
     },
 
     _buildMenu: function() {
         this.menu.removeAll();
+        let currentMode = this._getCurrentMode();
 
-        // --- SECTION: DEVICE PRESETS ---
-        let presetHeader = new PopupMenu.PopupMenuItem("--- [ DEVICE PRESETS ] ---", { reactive: false });
+        // --- DEVICE PRESETS ---
+        let presetHeader = new PopupMenu.PopupMenuItem("DEVICE PRESETS", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(presetHeader);
-        this._addMenuItem("MacBook Air (16:10)", "computer-symbolic", "mac");
-        this._addMenuItem("iPad Pro 11\" (3:2)", "tablet-symbolic", "ipad");
-        this._addMenuItem("iPhone Landscape", "phone-symbolic", "iphonel");
-        this._addMenuItem("iPhone Portrait", "phone-symbolic", "iphonep");
+
+        let devices = [
+            ["MacBook Air (16:10)", "computer-symbolic", "mac", "MacBook Air"],
+            ["iPad Pro 11\" (3:2)", "tablet-symbolic", "ipad", "iPad Pro 11\""],
+            ["iPhone Landscape", "phone-symbolic", "iphonel", "iPhone Landscape"],
+            ["iPhone Portrait", "phone-symbolic", "iphonep", "iPhone Portrait"]
+        ];
+
+        for (let i = 0; i < devices.length; i++) {
+            let [label, icon, arg, modeName] = devices[i];
+            let isActive = (currentMode === modeName);
+            let displayLabel = isActive ? "\u{2713} " + label : "   " + label;
+            this._addMenuItem(displayLabel, icon, arg);
+        }
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // --- SECTION: PERFORMANCE & COMFORT ---
-        let perfHeader = new PopupMenu.PopupMenuItem("--- [ PERFORMANCE & COMFORT ] ---", { reactive: false });
+        // --- PERFORMANCE & COMFORT ---
+        let perfHeader = new PopupMenu.PopupMenuItem("PERFORMANCE & COMFORT", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(perfHeader);
         this._addMenuItem("Toggle Performance Mode", "go-jump-symbolic", "speed");
         this._addMenuItem("Toggle OLED Theme", "weather-clear-night-symbolic", "theme");
@@ -102,8 +133,8 @@ MyApplet.prototype = {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // --- SECTION: SYSTEM & SECURITY ---
-        let systemHeader = new PopupMenu.PopupMenuItem("--- [ SYSTEM & SECURITY ] ---", { reactive: false });
+        // --- SYSTEM & SECURITY ---
+        let systemHeader = new PopupMenu.PopupMenuItem("SYSTEM & SECURITY", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(systemHeader);
         this._addMenuItem("Privacy Shield (Lock)", "system-lock-screen-symbolic", "privacy");
         this._addMenuItem("Fix Clipboard / Audio / Keys", "applications-system-symbolic", "fix");
@@ -113,7 +144,7 @@ MyApplet.prototype = {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         let studioItem = new PopupMenu.PopupIconMenuItem("Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC);
-        studioItem.connect('activate', () => { Util.spawnCommandLine("gnome-terminal -- " + RES_CMD); });
+        studioItem.connect('activate', () => { Util.spawnCommandLine("x-terminal-emulator -e " + RES_CMD); });
         this.menu.addMenuItem(studioItem);
     },
 
@@ -121,12 +152,17 @@ MyApplet.prototype = {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
         item.connect('activate', () => {
             Util.spawnCommandLine(RES_CMD + " " + arg);
-            Mainloop.timeout_add(1000, () => { this._scheduleUpdate(); return false; });
+            Mainloop.timeout_add(1000, () => {
+                this._scheduleUpdate();
+                this._buildMenu();
+                return false;
+            });
         });
         this.menu.addMenuItem(item);
     },
 
     on_applet_clicked: function(event) {
+        this._buildMenu();
         this._scheduleUpdate();
         this.menu.toggle();
     },
