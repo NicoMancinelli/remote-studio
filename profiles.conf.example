@@ -1,0 +1,10 @@
+# Remote Studio - Custom Device Profiles
+# Format: key=label|width|height|scaling|text_scale|cursor
+#
+# Copy this file to ~/.config/remote-studio/profiles.conf
+# and add your own device profiles.
+#
+# Example:
+# surface=Surface Pro|2736|1824|2|1.0|48
+# monitor=External 1080p|1920|1080|1|1.0|24
+# ultra=Ultrawide|3440|1440|1|1.2|32

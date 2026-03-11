@@ -9,6 +9,15 @@ const RES_CMD = "/usr/local/bin/res";
 const STATUS_FILE = "/tmp/res_status";
 const STATE_FILE = GLib.get_home_dir() + "/.res_state";
 
+// Map mode names to panel icons
+const MODE_ICONS = {
+    "MacBook Air": "computer-symbolic",
+    "iPad Pro 11\"": "tablet-symbolic",
+    "iPhone Landscape": "phone-symbolic",
+    "iPhone Portrait": "phone-symbolic",
+    "Reset": "view-refresh-symbolic"
+};
+
 function MyApplet(metadata, orientation, panel_height, instance_id) {
     this._init(metadata, orientation, panel_height, instance_id);
 }
@@ -28,7 +37,6 @@ MyApplet.prototype = {
         this.menuManager.addMenu(this.menu);
 
         this.lastUserCount = 0;
-        this._currentMode = "";
         this._timeout = null;
         this._readTimeout = null;
         this._scheduleUpdate();
@@ -65,6 +73,13 @@ MyApplet.prototype = {
         return "";
     },
 
+    _updateIcon: function(modeName) {
+        let icon = MODE_ICONS[modeName] || "video-display-symbolic";
+        // Custom resolutions start with "Custom"
+        if (modeName && modeName.indexOf("Custom") === 0) icon = "preferences-desktop-display-symbolic";
+        this.set_applet_icon_name(icon);
+    },
+
     _readStatus: function() {
         try {
             let [res, contents] = GLib.file_get_contents(STATUS_FILE);
@@ -79,10 +94,17 @@ MyApplet.prototype = {
             let user_icon = (userCount > 0) ? " \u{1F465}" + userCount : "";
             let alerts = info[5] || "";
 
+            // Connection notifications
             if (userCount > this.lastUserCount) {
-                Util.spawnCommandLine("notify-send -u critical 'Remote Studio' 'User Connected!'");
+                let diff = userCount - this.lastUserCount;
+                Util.spawnCommandLine("notify-send -u critical 'Remote Studio' '" + diff + " user(s) connected'");
+            } else if (userCount < this.lastUserCount && this.lastUserCount > 0) {
+                Util.spawnCommandLine("notify-send -u normal 'Remote Studio' 'User disconnected (" + userCount + " remaining)'");
             }
             this.lastUserCount = userCount;
+
+            // Update panel icon based on current mode
+            this._updateIcon(label);
 
             this.set_applet_label(alerts + label + user_icon);
             this.set_applet_tooltip(

@@ -1,26 +1,40 @@
 #!/bin/bash
 
 # ==============================================================================
-# RUSTDESK REMOTE STUDIO V7.0
+# RUSTDESK REMOTE STUDIO V8.0
 # ==============================================================================
 
 STATE_FILE="$HOME/.res_state"
 WALLPAPER_BACKUP="$HOME/.wallpaper_backup"
 LOG_FILE="$HOME/.remote_studio.log"
+USER_PROFILES="$HOME/.config/remote-studio/profiles.conf"
 
-# Colors for Text Menu
+# Colors
 RED='\033[1;31m'
+GREEN='\033[1;32m'
 CYAN='\033[1;36m'
 YELLOW='\033[1;33m'
+DIM='\033[2m'
 NC='\033[0m'
 
-# Device profiles: name|width|height|scaling|text_scale|cursor
+# Built-in device profiles: label|width|height|scaling|text_scale|cursor
 declare -A PROFILES=(
     [mac]="MacBook Air|2880|1800|1|1.5|48"
     [ipad]="iPad Pro 11\"|2424|1664|2|1.1|48"
     [iphonel]="iPhone Landscape|2868|1320|2|1.2|64"
     [iphonep]="iPhone Portrait|1320|2868|2|1.2|64"
 )
+
+# Load user-defined profiles from ~/.config/remote-studio/profiles.conf
+# Format: key=label|width|height|scaling|text_scale|cursor
+if [ -f "$USER_PROFILES" ]; then
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue  # skip comments
+        [[ -z "$key" || -z "$value" ]] && continue   # skip empty lines
+        key=$(echo "$key" | xargs)  # trim whitespace
+        PROFILES[$key]="$value"
+    done < "$USER_PROFILES"
+fi
 
 # ------------------------------------------------------------------------------
 # CORE ENGINE
@@ -120,16 +134,57 @@ do_action() {
     esac
 }
 
+get_toggle_states() {
+    SPD=$(gsettings get org.cinnamon desktop-effects 2>/dev/null); [ "$SPD" == "false" ] && S_ST="ON" || S_ST="OFF"
+    CAF=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null); [ "$CAF" == "false" ] && C_ST="ON" || C_ST="OFF"
+    THM=$(gsettings get org.cinnamon.desktop.interface gtk-theme 2>/dev/null | tr -d "'"); [[ "$THM" == *"Dark"* ]] && T_ST="Dark" || T_ST="Light"
+    GAMMA=$(xgamma 2>&1 | awk '{print $4}'); [[ "$GAMMA" != "1.000" ]] && N_ST="ON" || N_ST="OFF"
+}
+
+show_info() {
+    local cur_mode="None" cur_res="N/A"
+    if [ -f "$STATE_FILE" ]; then
+        cur_mode=$(awk -F"'" '{print $2}' "$STATE_FILE")
+        read w h _ <<< "$(cat "$STATE_FILE")"
+        cur_res="${w}x${h}"
+    fi
+    get_toggle_states
+    get_stats
+    echo -e "${CYAN}Remote Studio${NC}"
+    echo -e "  Mode:        ${GREEN}${cur_mode}${NC} (${cur_res})"
+    echo -e "  Speed Mode:  $([ "$S_ST" == "ON" ] && echo "${GREEN}ON${NC}" || echo "${DIM}OFF${NC}")"
+    echo -e "  Theme:       ${T_ST}"
+    echo -e "  Night Shift: $([ "$N_ST" == "ON" ] && echo "${YELLOW}ON${NC}" || echo "${DIM}OFF${NC}")"
+    echo -e "  Caffeine:    $([ "$C_ST" == "ON" ] && echo "${GREEN}ON${NC}" || echo "${DIM}OFF${NC}")"
+    echo -e "  IP:          ${IP_ADDR}"
+    echo -e "  Temp:        ${THERMAL_ALERT}${TEMP}"
+    echo -e "  RAM:         ${RAM}"
+    echo -e "  Latency:     ${PING_STAT}"
+    echo -e "  RustDesk:    ${USERS} user(s)"
+}
+
+show_log() {
+    local lines=${1:-20}
+    if [ -f "$LOG_FILE" ]; then
+        tail -n "$lines" "$LOG_FILE"
+    else
+        echo "No log file yet."
+    fi
+}
+
 show_help() {
     echo "Remote Studio - RustDesk display management"
     echo ""
     echo "Usage: res [command]"
     echo ""
     echo "Device Profiles:"
-    for key in "${!PROFILES[@]}"; do
+    for key in $(echo "${!PROFILES[@]}" | tr ' ' '\n' | sort); do
         IFS='|' read -r label width height scaling _ _ <<< "${PROFILES[$key]}"
         printf "  %-12s %s (%dx%d @%sx)\n" "$key" "$label" "$width" "$height" "$scaling"
     done
+    echo ""
+    echo "Custom Resolution:"
+    echo "  custom W H [S] Set arbitrary WxH resolution (S=scaling, default 1)"
     echo ""
     echo "Actions:"
     echo "  speed        Toggle performance mode (animations/wallpaper)"
@@ -145,8 +200,13 @@ show_help() {
     echo "  reset        Reset to 1024x768"
     echo ""
     echo "Info:"
-    echo "  status       Print system stats (pipe-delimited)"
+    echo "  info         Show current state and toggle status"
+    echo "  status       Print system stats (pipe-delimited, for applet)"
+    echo "  log [N]      Show last N log entries (default 20)"
     echo "  help         Show this help"
+    echo ""
+    echo "Custom profiles: $USER_PROFILES"
+    echo "  Format: key=label|width|height|scaling|text_scale|cursor"
     echo ""
     echo "No arguments launches the interactive TUI."
 }
@@ -157,12 +217,32 @@ show_help() {
 
 if [ -n "$1" ]; then
     case "$1" in
-        mac|ipad|iphonel|iphonep) apply_profile "$1" ;;
+        custom)
+            if [ -z "$2" ] || [ -z "$3" ]; then
+                echo "Usage: res custom WIDTH HEIGHT [SCALING]"
+                echo "  e.g. res custom 1920 1080"
+                echo "  e.g. res custom 2560 1440 2"
+                exit 1
+            fi
+            local_scaling="${4:-1}"
+            local_text=$(echo "scale=1; 1.0 * $local_scaling" | bc)
+            local_cursor=$(( 24 * local_scaling ))
+            apply_all "$2" "$3" "$local_scaling" "$local_text" "$local_cursor" "Custom ${2}x${3}"
+            ;;
         status) get_stats; net=$(get_net_speed); cur="NONE"; [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
                 echo "$cur | $TEMP | $PING_STAT | $USERS | $RAM | $THERMAL_ALERT | $net | $IP_ADDR" ;;
+        info) show_info ;;
+        log) show_log "$2" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
-        *) echo "Unknown command: $1"; echo "Run 'res help' for usage."; exit 1 ;;
+        *) # Check if it's a profile name (including user-defined)
+           if [ -n "${PROFILES[$1]}" ]; then
+               apply_profile "$1"
+           else
+               echo "Unknown command: $1"
+               echo "Run 'res help' for usage."
+               exit 1
+           fi ;;
     esac
     exit 0
 fi
@@ -172,12 +252,14 @@ show_text_menu() {
     while true; do
         clear
         get_stats
+        get_toggle_states
+        CUR="None"; [ -f "$STATE_FILE" ] && CUR=$(awk -F"'" '{print $2}' "$STATE_FILE")
         echo -e "${CYAN}=========================================================${NC}"
-        echo -e "${YELLOW} RUSTDESK CONTROL STUDIO (TEXT MODE) ${NC}"
-        echo -e "${CYAN} IP: ${NC}$IP_ADDR | ${CYAN}👥 USERS: ${NC}$USERS | ${RED}${THERMAL_ALERT}${TEMP}${NC}"
+        echo -e "${YELLOW} REMOTE STUDIO (TEXT MODE)${NC}  ${DIM}Mode: ${CUR}${NC}"
+        echo -e "${CYAN} IP: ${NC}$IP_ADDR ${CYAN}| Users: ${NC}$USERS ${CYAN}| ${NC}${RED}${THERMAL_ALERT}${NC}${TEMP} ${CYAN}| ${NC}${RAM}"
         echo -e "${CYAN}=========================================================${NC}"
         echo " 1) MacBook Air | 2) iPad Pro | 3) iPhone L | 4) iPhone P"
-        echo " 5) Speed Mode  | 6) OLED Theme | 7) Caffeine | 8) Night Shift"
+        echo -e " 5) Speed $([ "$S_ST" == "ON" ] && echo "${GREEN}[ON]${NC} " || echo "[OFF]") | 6) Theme [${T_ST}] | 7) Caffeine $([ "$C_ST" == "ON" ] && echo "${GREEN}[ON]${NC} " || echo "[OFF]") | 8) Night $([ "$N_ST" == "ON" ] && echo "${YELLOW}[ON]${NC} " || echo "[OFF]")"
         echo " 9) Fix All     | 10) Privacy  | 11) Reset   | 12) Exit"
         echo -e "${CYAN}=========================================================${NC}"
         read -p "Select [1-12]: " C
@@ -194,10 +276,11 @@ show_text_menu() {
 # TUI Loop
 while true; do
     get_stats
-    SPD=$(gsettings get org.cinnamon desktop-effects); [ "$SPD" == "false" ] && S_ST="[🚀]" || S_ST="[🎨]"
-    CAF=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled); [ "$CAF" == "false" ] && C_ST="[☕]" || C_ST="[OFF]"
-    THM=$(gsettings get org.cinnamon.desktop.interface gtk-theme | tr -d "'"); [[ "$THM" == *"Dark"* ]] && T_ST="[🌙]" || T_ST="[☀️]"
-    GAMMA=$(xgamma 2>&1 | awk '{print $4}'); [[ "$GAMMA" == "1.000" ]] && N_ST="[OFF]" || N_ST="[🌙]"
+    get_toggle_states
+    S_ICO="[🚀]"; [ "$S_ST" == "OFF" ] && S_ICO="[🎨]"
+    C_ICO="[☕]"; [ "$C_ST" == "OFF" ] && C_ICO="[OFF]"
+    T_ICO="[🌙]"; [ "$T_ST" == "Light" ] && T_ICO="[☀️]"
+    N_ICO="[🌙]"; [ "$N_ST" == "OFF" ] && N_ICO="[OFF]"
     CUR="None"; [ -f "$STATE_FILE" ] && CUR=$(awk -F"'" '{print $2}' "$STATE_FILE")
 
     # DYNAMIC WHIPTAIL SIZE
@@ -211,10 +294,10 @@ while true; do
     "3" "📱 iPhone Landscape (19.5:9)" \
     "4" "📱 iPhone Portrait (9:19.5)" \
     " " "─── PERFORMANCE & COMFORT ───" \
-    "5" "Toggle Performance Mode $S_ST" \
-    "6" "Toggle OLED Dark Theme  $T_ST" \
-    "7" "Toggle Night Shift      $N_ST" \
-    "8" "Toggle Caffeine Mode    $C_ST" \
+    "5" "Toggle Performance Mode $S_ICO" \
+    "6" "Toggle OLED Dark Theme  $T_ICO" \
+    "7" "Toggle Night Shift      $N_ICO" \
+    "8" "Toggle Caffeine Mode    $C_ICO" \
     "  " "─── SYSTEM TOOLS ───" \
     "9" "Security Privacy Shield (Lock)" \
     "10" "Fix Clipboard / Audio / Keys" \
