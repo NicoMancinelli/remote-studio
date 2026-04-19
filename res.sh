@@ -19,7 +19,7 @@ NC='\033[0m'
 
 # Built-in device profiles: label|width|height|scaling|text_scale|cursor
 declare -A PROFILES=(
-    [mac]="MacBook Air|2880|1800|1|1.5|48"
+    [mac]="MacBook Air 13|2560|1664|1|1.5|48"
     [ipad]="iPad Pro 11\"|2424|1664|2|1.1|48"
     [iphonel]="iPhone Landscape|2868|1320|2|1.2|64"
     [iphonep]="iPhone Portrait|1320|2868|2|1.2|64"
@@ -67,7 +67,7 @@ apply_all() {
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     [ -z "$OUTPUT" ] && return 1
     MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
-    MODE_NAME=$(echo "$MODE_INFO" | awk '{print $2}' | tr -d '"')
+    MODE_NAME="remote-studio-${width}x${height}-60"
     MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
     xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null
     xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
@@ -289,7 +289,7 @@ while true; do
     [ $W_H -gt 22 ] && W_H=22; [ $W_W -gt 78 ] && W_W=78
 
     WCHOICE=$(whiptail --title "STUDIO | $IP_ADDR | 👥 $USERS | $PING_STAT" --backtitle "Remote Studio (Mode: $CUR)" --menu "Control Dashboard" $W_H $W_W 13 \
-    "1" "💻 MacBook Air M4 (16:10)" \
+    "1" "💻 MacBook Air 13 (2560x1664)" \
     "2" "📱 iPad Pro 11\" (3:2)" \
     "3" "📱 iPhone Landscape (19.5:9)" \
     "4" "📱 iPhone Portrait (9:19.5)" \

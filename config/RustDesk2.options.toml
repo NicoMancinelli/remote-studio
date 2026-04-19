@@ -1,0 +1,6 @@
+[options]
+direct-server = 'Y'
+allow-linux-headless = 'Y'
+allow-remote-config-modification = 'Y'
+# Set this to the host's Tailscale IPv4 address, for example 100.x.y.z.
+local-ip-addr = ''

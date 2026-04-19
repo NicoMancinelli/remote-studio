@@ -10,12 +10,13 @@ Three components working in sync:
 
 2.  **Cinnamon Applet (`applet/`)** - JavaScript panel applet providing a taskbar dashboard with live stats, device preset indicators, and a GUI menu. Polls status asynchronously via `/tmp/res_status`. Symlinked into `~/.local/share/cinnamon/applets/remote-studio@neek/`.
 
-3.  **X11 Configuration (`/etc/X11/xorg.conf`)** - Dummy driver with `Virtual 3840 2160` (4K buffer) for headless high-res virtual screens.
+3.  **X11 Configuration (`config/xorg.conf` -> `/etc/X11/xorg.conf`)** - Dummy driver with a `3840x2160` virtual buffer and presets for 13-inch MacBook Air, 15-inch MacBook Air, and 1920x1200 fallback modes.
+4.  **RustDesk Defaults (`config/RustDesk_default.toml`)** - Balanced display defaults for lower-latency RustDesk over Tailscale.
 
 ## Project Layout
 
 ```
-~/projects/remote-studio/
+~/dev/remote-studio/
     res.sh              # Main engine, TUI, and CLI
     REMOTE_STUDIO.md    # This file
     .gitignore
@@ -24,6 +25,10 @@ Three components working in sync:
         metadata.json   # Applet metadata
     config/
         xsessionrc      # Display restore on login
+        xorg.conf       # Headless Xorg dummy display config
+        RustDesk_default.toml
+        RustDesk2.options.toml
+    install.sh          # Symlink and optional system config installer
 ```
 
 ## Symlinks
@@ -33,6 +38,17 @@ Three components working in sync:
 | `/usr/local/bin/res` | `res.sh` |
 | `~/.local/share/cinnamon/applets/remote-studio@neek/*` | `applet/*` |
 | `~/.xsessionrc` | `config/xsessionrc` |
+
+## Install
+
+```
+./install.sh
+./install.sh --system
+```
+
+The default install links `res`, the Cinnamon applet, and the login restore script. The `--system` install also backs up and replaces `/etc/X11/xorg.conf`; restart LightDM or reboot for that file to be loaded.
+
+For RustDesk over Tailscale, copy the safe defaults from `config/RustDesk_default.toml` into `~/.config/rustdesk/RustDesk_default.toml`, then set `local-ip-addr` in RustDesk's options to this host's Tailscale IPv4 address. Do not commit real RustDesk key, password, or trusted-device files.
 
 ## Runtime State (in `$HOME`)
 
@@ -46,7 +62,7 @@ Three components working in sync:
 
 ```
 res help              Show all commands
-res mac               MacBook Air 2880x1800 (16:10, 1x)
+res mac               MacBook Air 13 2560x1664 (1x)
 res ipad              iPad Pro 2424x1664 (3:2, 2x)
 res iphonel           iPhone Landscape 2868x1320 (19.5:9, 2x)
 res iphonep           iPhone Portrait 1320x2868 (9:19.5, 2x)

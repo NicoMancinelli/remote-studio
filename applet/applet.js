@@ -11,7 +11,7 @@ const STATE_FILE = GLib.get_home_dir() + "/.res_state";
 
 // Map mode names to panel icons
 const MODE_ICONS = {
-    "MacBook Air": "computer-symbolic",
+    "MacBook Air 13": "computer-symbolic",
     "iPad Pro 11\"": "tablet-symbolic",
     "iPhone Landscape": "phone-symbolic",
     "iPhone Portrait": "phone-symbolic",
@@ -130,7 +130,7 @@ MyApplet.prototype = {
         this.menu.addMenuItem(presetHeader);
 
         let devices = [
-            ["MacBook Air (16:10)", "computer-symbolic", "mac", "MacBook Air"],
+            ["MacBook Air 13 (2560x1664)", "computer-symbolic", "mac", "MacBook Air 13"],
             ["iPad Pro 11\" (3:2)", "tablet-symbolic", "ipad", "iPad Pro 11\""],
             ["iPhone Landscape", "phone-symbolic", "iphonel", "iPhone Landscape"],
             ["iPhone Portrait", "phone-symbolic", "iphonep", "iPhone Portrait"]

@@ -17,7 +17,7 @@ if [ -f "$STATE_FILE" ]; then
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     if [ -n "$OUTPUT" ]; then
         MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
-        MODE_NAME=$(echo "$MODE_INFO" | awk '{print $2}' | tr -d '"')
+        MODE_NAME="remote-studio-${width}x${height}-60"
         
         if ! xrandr | grep -q "$MODE_NAME"; then
             xrandr --newmode "$MODE_NAME" $(echo "$MODE_INFO" | cut -d' ' -f3-) 2>/dev/null
