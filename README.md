@@ -7,6 +7,7 @@ The default `mac` profile targets a 13-inch MacBook Air at `2560x1664`.
 Useful commands:
 
 ```bash
+res
 res mac
 res doctor
 res tailnet

@@ -88,6 +88,18 @@ res xorg [PATH]       Generate Xorg dummy config from profiles
 res status            Pipe-delimited stats for applet
 ```
 
+## TUI Dashboard
+
+Run `res` with no arguments to open the dashboard. The TUI is organized around the operational workflow:
+
+| Menu | Purpose |
+| :--- | :--- |
+| `profiles` | Apply a saved device profile or enter a custom resolution |
+| `performance` | Toggle speed mode, caffeine, theme, night shift, and quick repairs |
+| `diagnostics` | Run doctor, tailnet, xrandr, OpenGL, service, and log views |
+| `system` | Restart RustDesk, preview/write generated Xorg config, install links, backup configs |
+| `dashboard` | Show a scrollable summary of current mode, services, renderer, toggles, and Tailnet address |
+
 ## Developer Notes
 
 *   Device profiles are loaded from `config/profiles.conf`, then overridden by `~/.config/remote-studio/profiles.conf`.

@@ -384,73 +384,263 @@ if [ -n "$1" ]; then
     exit 0
 fi
 
-# FALLBACK TEXT MENU
-show_text_menu() {
+get_current_mode() {
+    if [ -f "$STATE_FILE" ]; then
+        awk -F"'" '{print $2}' "$STATE_FILE"
+    else
+        echo "None"
+    fi
+}
+
+get_current_resolution() {
+    if [ -f "$STATE_FILE" ]; then
+        read -r w h _ < "$STATE_FILE"
+        echo "${w}x${h}"
+    else
+        xrandr 2>/dev/null | awk '/\*/ {print $1; exit}'
+    fi
+}
+
+get_active_display() {
+    xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}'
+}
+
+get_renderer_summary() {
+    local renderer
+    renderer=$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')
+    [ -n "$renderer" ] && echo "$renderer" || echo "unknown"
+}
+
+run_panel_command() {
+    local title=$1
+    shift
+    local tmp
+    tmp=$(mktemp)
+    {
+        echo "$ $*"
+        echo
+        "$@"
+    } > "$tmp" 2>&1
+    whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90
+    rm -f "$tmp"
+}
+
+confirm_action() {
+    local message=$1
+    whiptail --title "Confirm" --yesno "$message" 10 70
+}
+
+tui_header() {
+    local mode res display renderer tailnet rustdesk_state tailscale_state
+    mode=$(get_current_mode)
+    res=$(get_current_resolution)
+    display=$(get_active_display)
+    renderer=$(get_renderer_summary)
+    tailnet=$(get_tailnet_ip)
+    rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
+    tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
+    get_stats
+    get_toggle_states
+
+    cat <<EOF
+Mode:       $mode ($res)
+Display:    ${display:-not detected}
+Tailnet:    ${tailnet:-unavailable}  RustDesk direct: ${tailnet:-<tailscale-ip>}:21118
+Services:   rustdesk=$rustdesk_state  tailscaled=$tailscale_state  users=$USERS
+System:     temp=${THERMAL_ALERT}${TEMP:-unknown}  ram=$RAM  ping=$PING_STAT
+Toggles:    speed=$S_ST  caffeine=$C_ST  theme=$T_ST  night=$N_ST
+Renderer:   $renderer
+EOF
+}
+
+show_dashboard() {
+    local tmp
+    tmp=$(mktemp)
+    tui_header > "$tmp"
+    whiptail --title "Remote Studio Dashboard" --scrolltext --textbox "$tmp" 20 90
+    rm -f "$tmp"
+}
+
+tui_profiles() {
+    local entries=()
+    local key label width height scaling text_scale cursor current choice
+    current=$(get_current_mode)
+
+    for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do
+        IFS='|' read -r label width height scaling text_scale cursor <<< "${PROFILES[$key]}"
+        entries+=("$key" "$label ${width}x${height} scale=${scaling} cursor=${cursor}")
+    done
+    entries+=("custom" "Enter arbitrary resolution and scaling")
+
+    choice=$(whiptail --title "Display Profiles" --backtitle "Current: $current" --menu "Apply a profile" 24 90 14 "${entries[@]}" 3>&1 1>&2 2>&3)
+    [ -z "$choice" ] && return 0
+    [ "$choice" = "custom" ] && { tui_custom_resolution; return 0; }
+
+    if apply_profile "$choice"; then
+        whiptail --title "Profile Applied" --msgbox "Applied ${PROFILES[$choice]}" 9 80
+    else
+        whiptail --title "Profile Failed" --msgbox "Could not apply profile: $choice" 9 80
+    fi
+}
+
+tui_custom_resolution() {
+    local width height scaling text_scale cursor
+    width=$(whiptail --title "Custom Resolution" --inputbox "Width" 9 50 "1920" 3>&1 1>&2 2>&3) || return 0
+    height=$(whiptail --title "Custom Resolution" --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
+    scaling=$(whiptail --title "Custom Resolution" --inputbox "Cinnamon scaling factor" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
+    case "$width:$height:$scaling" in
+        *[!0-9:.]*|:*|*:|*::*|*.*:*)
+            whiptail --title "Invalid Input" --msgbox "Use numeric width, height, and scaling." 9 60
+            return 1
+            ;;
+    esac
+    text_scale="$scaling"
+    cursor=$(awk "BEGIN { printf \"%d\", 24 * $scaling }")
+    apply_all "$width" "$height" "$scaling" "$text_scale" "$cursor" "Custom ${width}x${height}" \
+        && whiptail --title "Custom Resolution" --msgbox "Applied ${width}x${height}." 8 60 \
+        || whiptail --title "Custom Resolution" --msgbox "Could not apply ${width}x${height}." 8 60
+}
+
+tui_performance() {
+    local choice
     while true; do
-        clear
-        get_stats
         get_toggle_states
-        CUR="None"; [ -f "$STATE_FILE" ] && CUR=$(awk -F"'" '{print $2}' "$STATE_FILE")
-        echo -e "${CYAN}=========================================================${NC}"
-        echo -e "${YELLOW} REMOTE STUDIO (TEXT MODE)${NC}  ${DIM}Mode: ${CUR}${NC}"
-        echo -e "${CYAN} IP: ${NC}$IP_ADDR ${CYAN}| Users: ${NC}$USERS ${CYAN}| ${NC}${RED}${THERMAL_ALERT}${NC}${TEMP} ${CYAN}| ${NC}${RAM}"
-        echo -e "${CYAN}=========================================================${NC}"
-        echo " 1) MacBook Air | 2) iPad Pro | 3) iPhone L | 4) iPhone P"
-        echo -e " 5) Speed $([ "$S_ST" == "ON" ] && echo "${GREEN}[ON]${NC} " || echo "[OFF]") | 6) Theme [${T_ST}] | 7) Caffeine $([ "$C_ST" == "ON" ] && echo "${GREEN}[ON]${NC} " || echo "[OFF]") | 8) Night $([ "$N_ST" == "ON" ] && echo "${YELLOW}[ON]${NC} " || echo "[OFF]")"
-        echo " 9) Fix All     | 10) Privacy  | 11) Reset   | 12) Exit"
-        echo -e "${CYAN}=========================================================${NC}"
-        read -p "Select [1-12]: " C
-        case $C in
-            1) apply_profile mac ;; 2) apply_profile ipad ;;
-            3) apply_profile iphonel ;; 4) apply_profile iphonep ;;
-            5) do_action speed ;; 6) do_action theme ;; 7) do_action caf ;; 8) do_action night ;;
-            9) do_action fix ;; 10) do_action privacy ;; 11) do_action reset ;;
-            12) exit 0 ;;
+        choice=$(whiptail --title "Performance & Comfort" --menu "Tune the active remote session" 20 82 10 \
+            "speed" "Toggle performance mode (currently $S_ST)" \
+            "caf" "Toggle caffeine / screen lock (currently $C_ST)" \
+            "theme" "Toggle dark/light theme (currently $T_ST)" \
+            "night" "Toggle warm gamma (currently $N_ST)" \
+            "fix" "Fix clipboard, audio, and keyboard layout" \
+            "audio" "Restart PulseAudio" \
+            "keys" "Reset keyboard layout to US" \
+            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            speed|caf|theme|night|fix|audio|keys)
+                do_action "$choice"
+                whiptail --title "Action Complete" --msgbox "Ran: $choice" 8 50
+                ;;
         esac
     done
 }
 
-# TUI Loop
+tui_diagnostics() {
+    local choice
+    while true; do
+        choice=$(whiptail --title "Diagnostics" --menu "Inspect the remote desktop stack" 20 86 10 \
+            "doctor" "Full Remote Studio health report" \
+            "tailnet" "Show Tailscale IP and RustDesk direct address" \
+            "info" "Show current state and toggles" \
+            "xrandr" "Show active Xorg display modes" \
+            "gl" "Show OpenGL renderer details" \
+            "services" "Show RustDesk and Tailscale service state" \
+            "log" "Show Remote Studio event log" \
+            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            doctor) run_panel_command "Doctor" "$0" doctor ;;
+            tailnet) run_panel_command "Tailnet" "$0" tailnet ;;
+            info) run_panel_command "Info" "$0" info ;;
+            xrandr) run_panel_command "xrandr" xrandr --verbose ;;
+            gl) run_panel_command "OpenGL Renderer" glxinfo -B ;;
+            services) run_panel_command "Services" systemctl status rustdesk tailscaled --no-pager ;;
+            log) run_panel_command "Remote Studio Log" "$0" log 80 ;;
+        esac
+    done
+}
+
+tui_system() {
+    local choice tmp
+    while true; do
+        choice=$(whiptail --title "System & Config" --menu "System-level operations" 20 86 10 \
+            "service" "Restart RustDesk service" \
+            "xorg-preview" "Preview generated Xorg dummy config" \
+            "xorg-write" "Write generated Xorg config to config/xorg.conf" \
+            "install" "Run user-level install" \
+            "backup" "Run install.sh backup" \
+            "privacy" "Lock screen and blank monitor" \
+            "reset" "Reset display to 1024x768" \
+            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            service)
+                confirm_action "Restart RustDesk now?" && do_action service
+                ;;
+            xorg-preview)
+                run_panel_command "Generated Xorg Config" "$0" xorg
+                ;;
+            xorg-write)
+                confirm_action "Regenerate config/xorg.conf from profiles?" && "$0" xorg "$ROOT_DIR/config/xorg.conf" \
+                    && whiptail --title "Xorg Config" --msgbox "Updated config/xorg.conf." 8 60
+                ;;
+            install)
+                run_panel_command "Install" "$ROOT_DIR/install.sh" install
+                ;;
+            backup)
+                run_panel_command "Backup" "$ROOT_DIR/install.sh" backup
+                ;;
+            privacy|reset)
+                confirm_action "Run $choice now?" && do_action "$choice"
+                ;;
+        esac
+    done
+}
+
+show_text_menu() {
+    local choice
+    while true; do
+        clear
+        echo -e "${CYAN}Remote Studio${NC}"
+        tui_header
+        echo
+        echo "1) Profiles       2) Performance    3) Diagnostics"
+        echo "4) System         5) Logs           6) Tailnet"
+        echo "7) Doctor         8) Help           9) Exit"
+        echo
+        read -r -p "Select [1-9]: " choice
+        case "$choice" in
+            1) show_help; read -r -p "Run profile key: " key; [ -n "$key" ] && apply_profile "$key" ;;
+            2) do_action speed ;;
+            3|7) show_doctor; read -r -p "Press enter to continue..." _ ;;
+            4) do_action service ;;
+            5) show_log 40; read -r -p "Press enter to continue..." _ ;;
+            6) show_tailnet; read -r -p "Press enter to continue..." _ ;;
+            8) show_help; read -r -p "Press enter to continue..." _ ;;
+            9) exit 0 ;;
+        esac
+    done
+}
+
+if ! command -v whiptail >/dev/null 2>&1 || [ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] || [ "$(tput cols 2>/dev/null || echo 0)" -lt 70 ]; then
+    show_text_menu
+fi
+
 while true; do
-    get_stats
-    get_toggle_states
-    S_ICO="[🚀]"; [ "$S_ST" == "OFF" ] && S_ICO="[🎨]"
-    C_ICO="[☕]"; [ "$C_ST" == "OFF" ] && C_ICO="[OFF]"
-    T_ICO="[🌙]"; [ "$T_ST" == "Light" ] && T_ICO="[☀️]"
-    N_ICO="[🌙]"; [ "$N_ST" == "OFF" ] && N_ICO="[OFF]"
-    CUR="None"; [ -f "$STATE_FILE" ] && CUR=$(awk -F"'" '{print $2}' "$STATE_FILE")
+    mode=$(get_current_mode)
+    res=$(get_current_resolution)
+    tailnet=$(get_tailnet_ip)
+    users=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
 
-    # DYNAMIC WHIPTAIL SIZE
-    T_H=$(tput lines); T_W=$(tput cols)
-    W_H=$(( T_H - 4 )); W_W=$(( T_W - 8 ))
-    [ $W_H -gt 22 ] && W_H=22; [ $W_W -gt 78 ] && W_W=78
+    choice=$(whiptail --title "Remote Studio" --backtitle "Mode: $mode ($res) | Tailnet: ${tailnet:-none} | Users: $users" --menu "$(tui_header)" 24 92 9 \
+        "profiles" "Apply display profile or custom resolution" \
+        "performance" "Session speed, comfort, and quick fixes" \
+        "diagnostics" "Doctor, Tailscale, xrandr, renderer, logs" \
+        "system" "RustDesk service, Xorg config, install, backups" \
+        "dashboard" "Show dashboard as a scrollable report" \
+        "tailnet" "Print RustDesk direct address" \
+        "doctor" "Run health checks" \
+        "help" "Command reference" \
+        "exit" "Quit" 3>&1 1>&2 2>&3) || exit 0
 
-    WCHOICE=$(whiptail --title "STUDIO | $IP_ADDR | 👥 $USERS | $PING_STAT" --backtitle "Remote Studio (Mode: $CUR)" --menu "Control Dashboard" $W_H $W_W 13 \
-    "1" "💻 MacBook Air 13 (2560x1664)" \
-    "2" "📱 iPad Pro 11\" (3:2)" \
-    "3" "📱 iPhone Landscape (19.5:9)" \
-    "4" "📱 iPhone Portrait (9:19.5)" \
-    " " "─── PERFORMANCE & COMFORT ───" \
-    "5" "Toggle Performance Mode $S_ICO" \
-    "6" "Toggle OLED Dark Theme  $T_ICO" \
-    "7" "Toggle Night Shift      $N_ICO" \
-    "8" "Toggle Caffeine Mode    $C_ICO" \
-    "  " "─── SYSTEM TOOLS ───" \
-    "9" "Security Privacy Shield (Lock)" \
-    "10" "Fix Clipboard / Audio / Keys" \
-    "11" "Restart RustDesk Service" \
-    "12" "Standard Mode Reset" \
-    "13" "Exit" 3>&1 1>&2 2>&3)
-
-    RET=$?
-    if [ $RET -eq 255 ]; then show_text_menu; elif [ $RET -ne 0 ]; then exit 0; fi
-
-    case $WCHOICE in
-        1) apply_profile mac ;; 2) apply_profile ipad ;;
-        3) apply_profile iphonel ;; 4) apply_profile iphonep ;;
-        5) do_action speed ;; 6) do_action theme ;; 7) do_action night ;; 8) do_action caf ;;
-        9) do_action privacy ;; 10) do_action fix ;; 11) do_action service ;; 12) do_action reset ;;
-        13) exit 0 ;;
-        *) ;; # section headers, ignore
+    case "$choice" in
+        profiles) tui_profiles ;;
+        performance) tui_performance ;;
+        diagnostics) tui_diagnostics ;;
+        system) tui_system ;;
+        dashboard) show_dashboard ;;
+        tailnet) run_panel_command "Tailnet" "$0" tailnet ;;
+        doctor) run_panel_command "Doctor" "$0" doctor ;;
+        help) run_panel_command "Help" "$0" help ;;
+        exit) exit 0 ;;
     esac
 done
