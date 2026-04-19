@@ -6,7 +6,9 @@ const Mainloop = imports.mainloop;
 const St = imports.gi.St;
 
 const RES_CMD = "/usr/local/bin/res";
-const STATUS_FILE = "/tmp/res_status";
+const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || "/tmp";
+const STATUS_DIR = GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS_DIR) ? RUNTIME_DIR + "/remote-studio" : "/tmp/remote-studio";
+const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE = GLib.get_home_dir() + "/.res_state";
 
 // Map mode names to panel icons
@@ -47,7 +49,7 @@ MyApplet.prototype = {
         if (this._timeout) Mainloop.source_remove(this._timeout);
         if (this._readTimeout) Mainloop.source_remove(this._readTimeout);
 
-        GLib.spawn_command_line_async("/bin/bash -c \"" + RES_CMD + " status > " + STATUS_FILE + "\"");
+        GLib.spawn_command_line_async("/bin/bash -c \"mkdir -p " + STATUS_DIR + " && " + RES_CMD + " status > " + STATUS_FILE + "\"");
 
         this._readTimeout = Mainloop.timeout_add(600, () => {
             this._readStatus();
@@ -86,13 +88,14 @@ MyApplet.prototype = {
             if (!res) return;
 
             let info = contents.toString().trim().split(" | ");
-            // INDEX: 0:Mode, 1:Temp, 2:Ping, 3:Users, 4:RAM, 5:Alerts, 6:Traffic, 7:IP
-            if (info.length < 8) return;
+            // INDEX: 0:Mode, 1:Temp, 2:Ping, 3:Users, 4:RAM, 5:WarningCount, 6:WarningText, 7:Traffic, 8:IP
+            if (info.length < 9) return;
 
             let label = info[0];
             let userCount = parseInt(info[3]) || 0;
             let user_icon = (userCount > 0) ? " \u{1F465}" + userCount : "";
-            let alerts = info[5] || "";
+            let warningCount = parseInt(info[5]) || 0;
+            let alerts = (warningCount > 0) ? "\u26A0 " : "";
 
             // Connection notifications
             if (userCount > this.lastUserCount) {
@@ -112,9 +115,10 @@ MyApplet.prototype = {
                 "\nMode: " + label +
                 "\nTemp: " + info[1] +
                 "\nRAM: " + info[4] +
-                "\nIP: " + info[7] +
+                "\nIP: " + info[8] +
                 "\nLatency: " + info[2] +
-                "\nTraffic: " + info[6]
+                "\nTraffic: " + info[7] +
+                "\nWarnings: " + info[6]
             );
         } catch(e) {
             // Status file not ready yet
@@ -149,6 +153,8 @@ MyApplet.prototype = {
         let perfHeader = new PopupMenu.PopupMenuItem("PERFORMANCE & COMFORT", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(perfHeader);
         this._addMenuItem("Toggle Performance Mode", "go-jump-symbolic", "speed");
+        this._addMenuItem("Start Mac Session", "media-playback-start-symbolic", "session start mac");
+        this._addMenuItem("Stop Session", "media-playback-stop-symbolic", "session stop");
         this._addMenuItem("Toggle OLED Theme", "weather-clear-night-symbolic", "theme");
         this._addMenuItem("Toggle Night Shift", "night-light-symbolic", "night");
         this._addMenuItem("Toggle Caffeine", "battery-symbolic", "caf");

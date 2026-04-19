@@ -11,9 +11,10 @@
   - Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
   - Never overwrite identity, key, password, or trusted-device fields.
 
-- Add a persistent session mode.
-  - `res session start mac` should apply the Mac profile, performance mode, caffeine, RustDesk service checks, and tailnet checks.
-  - `res session stop` should restore prior power, animation, wallpaper, caffeine, and display settings.
+- Expand session mode.
+  - Done: `res session start mac` applies the Mac profile, performance mode, caffeine, and performance power profile where available.
+  - Done: `res session stop` restores captured display, speed, caffeine, and balanced power profile where available.
+  - Next: include RustDesk service restart policy and peer-specific Tailscale checks.
 
 ## Reliability
 
@@ -46,8 +47,8 @@
 
 - Show current resolution and Tailnet IP in the panel tooltip.
 - Add one-click `doctor`, `tailnet`, and session start/stop actions.
-- Highlight warnings from `res doctor` in the panel label.
-- Avoid writing `/tmp/res_status`; use a user runtime path such as `$XDG_RUNTIME_DIR/remote-studio/status`.
+- Done: highlight warning count from `res status` in the panel label.
+- Done: avoid writing `/tmp/res_status`; use a user runtime path such as `$XDG_RUNTIME_DIR/remote-studio/status`.
 - Make applet device entries data-driven from `config/profiles.conf`.
 
 ## Configuration

@@ -7,9 +7,16 @@
 STATE_FILE="$HOME/.res_state"
 WALLPAPER_BACKUP="$HOME/.wallpaper_backup"
 LOG_FILE="$HOME/.remote_studio.log"
+SESSION_FILE="$HOME/.config/remote-studio/session.state"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_PROFILES="$ROOT_DIR/config/profiles.conf"
 USER_PROFILES="$HOME/.config/remote-studio/profiles.conf"
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -w "$XDG_RUNTIME_DIR" ]; then
+    STATUS_DIR="$XDG_RUNTIME_DIR/remote-studio"
+else
+    STATUS_DIR="/tmp/remote-studio-${UID:-$(id -u)}"
+fi
+STATUS_FILE="$STATUS_DIR/status"
 
 # Colors
 RED='\033[1;31m'
@@ -57,22 +64,69 @@ get_primary_ip() {
     if [ -n "$tailnet_ip" ]; then
         echo "$tailnet_ip"
     else
-        hostname -I | awk '{print $1}'
+        hostname -I 2>/dev/null | awk '{print $1}'
     fi
+}
+
+get_active_display() {
+    xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}'
+}
+
+get_renderer_summary() {
+    local renderer
+    renderer=$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')
+    [ -n "$renderer" ] && echo "$renderer" || echo "unknown"
 }
 
 get_stats() {
     IP_ADDR=$(get_primary_ip)
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
     RAM=$(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2 }')
-    USERS=$(ss -tnp | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
+    USERS=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
     PING_RAW=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
     [ -z "$PING_RAW" ] && PING_STAT="Offline" || PING_STAT="${PING_RAW}ms"
     [[ "${TEMP%.*}" -gt 80 ]] 2>/dev/null && THERMAL_ALERT="⚠️ " || THERMAL_ALERT=""
 }
 
+get_warning_summary() {
+    local warnings=0 messages=() renderer rustdesk_state tailscale_state tailnet_ip current
+    renderer=$(get_renderer_summary 2>/dev/null || true)
+    rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
+    tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
+    tailnet_ip=$(get_tailnet_ip)
+    current=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
+
+    if [[ "$renderer" == *llvmpipe* ]]; then
+        warnings=$((warnings + 1))
+        messages+=("software-rendering")
+    fi
+    if [ "$rustdesk_state" != "active" ]; then
+        warnings=$((warnings + 1))
+        messages+=("rustdesk-${rustdesk_state:-unknown}")
+    fi
+    if [ "$tailscale_state" != "active" ] || [ -z "$tailnet_ip" ]; then
+        warnings=$((warnings + 1))
+        messages+=("tailscale")
+    fi
+    if [ -z "$current" ]; then
+        warnings=$((warnings + 1))
+        messages+=("display")
+    fi
+    if [ "$warnings" -eq 0 ]; then
+        echo "0|OK"
+    else
+        local IFS=','
+        echo "$warnings|${messages[*]}"
+    fi
+}
+
 get_net_speed() {
-    local IFACE=$(ip route get 8.8.8.8 | awk '{print $5}')
+    local IFACE
+    IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
+    if [ -z "$IFACE" ] || [ ! -r "/sys/class/net/$IFACE/statistics/rx_bytes" ]; then
+        echo "n/a"
+        return 0
+    fi
     local R1=$(cat /sys/class/net/$IFACE/statistics/rx_bytes); local T1=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
     sleep 0.5
     local R2=$(cat /sys/class/net/$IFACE/statistics/rx_bytes); local T2=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
@@ -153,6 +207,57 @@ do_action() {
     esac
 }
 
+speed_state() {
+    local status
+    status=$(gsettings get org.cinnamon desktop-effects 2>/dev/null)
+    [ "$status" = "false" ] && echo "ON" || echo "OFF"
+}
+
+caffeine_state() {
+    local cur
+    cur=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null)
+    [ "$cur" = "false" ] && echo "ON" || echo "OFF"
+}
+
+session_start() {
+    local profile="${1:-mac}"
+    mkdir -p "$(dirname "$SESSION_FILE")"
+    {
+        echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "profile=$profile"
+        echo "speed=$(speed_state)"
+        echo "caffeine=$(caffeine_state)"
+        echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"
+    } > "$SESSION_FILE"
+
+    apply_profile "$profile" || return 1
+    [ "$(speed_state)" = "ON" ] || do_action speed
+    [ "$(caffeine_state)" = "ON" ] || do_action caf
+    if command -v powerprofilesctl >/dev/null 2>&1; then
+        powerprofilesctl set performance 2>/dev/null || true
+    fi
+    log_event "Session start: $profile"
+}
+
+session_stop() {
+    if [ -f "$SESSION_FILE" ]; then
+        previous_state=$(grep '^state=' "$SESSION_FILE" | sed 's/^state=//')
+        if [ -n "$previous_state" ]; then
+            echo "$previous_state" > "$STATE_FILE"
+            read -r width height scaling text_scale cursor rest <<< "$previous_state"
+            label=$(echo "$previous_state" | awk -F"'" '{print $2}')
+            apply_all "$width" "$height" "$scaling" "$text_scale" "$cursor" "${label:-Restored}"
+        fi
+        grep -q '^speed=OFF$' "$SESSION_FILE" && [ "$(speed_state)" = "ON" ] && do_action speed
+        grep -q '^caffeine=OFF$' "$SESSION_FILE" && [ "$(caffeine_state)" = "ON" ] && do_action caf
+        rm -f "$SESSION_FILE"
+    fi
+    if command -v powerprofilesctl >/dev/null 2>&1; then
+        powerprofilesctl set balanced 2>/dev/null || true
+    fi
+    log_event "Session stop"
+}
+
 get_toggle_states() {
     SPD=$(gsettings get org.cinnamon desktop-effects 2>/dev/null); [ "$SPD" == "false" ] && S_ST="ON" || S_ST="OFF"
     CAF=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null); [ "$CAF" == "false" ] && C_ST="ON" || C_ST="OFF"
@@ -180,6 +285,21 @@ show_info() {
     echo -e "  RAM:         ${RAM}"
     echo -e "  Latency:     ${PING_STAT}"
     echo -e "  RustDesk:    ${USERS} user(s)"
+}
+
+show_status() {
+    local cur net warning_data warning_count warning_text line
+    get_stats
+    net=$(get_net_speed)
+    cur="NONE"
+    [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
+    warning_data=$(get_warning_summary)
+    warning_count=${warning_data%%|*}
+    warning_text=${warning_data#*|}
+    mkdir -p "$STATUS_DIR"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $IP_ADDR"
+    printf '%s\n' "$line" > "$STATUS_FILE"
+    printf '%s\n' "$line"
 }
 
 show_log() {
@@ -220,6 +340,8 @@ show_help() {
     echo "  doctor       Check RustDesk, Tailscale, Xorg, profiles, and symlinks"
     echo "  tailnet      Show this host's Tailscale IPv4 and RustDesk direct address"
     echo "  xorg [PATH]  Generate Xorg dummy config from profiles"
+    echo "  session start [PROFILE]  Apply profile, performance mode, and caffeine"
+    echo "  session stop             Restore previous session state"
     echo ""
     echo "Info:"
     echo "  info         Show current state and toggle status"
@@ -345,6 +467,24 @@ show_tailnet() {
     echo "RustDesk direct: $ip:21118"
 }
 
+show_session() {
+    case "${1:-status}" in
+        start) session_start "${2:-mac}" ;;
+        stop) session_stop ;;
+        status)
+            if [ -f "$SESSION_FILE" ]; then
+                cat "$SESSION_FILE"
+            else
+                echo "No active Remote Studio session."
+            fi
+            ;;
+        *)
+            echo "Usage: res session start [PROFILE] | stop | status"
+            return 1
+            ;;
+    esac
+}
+
 # ------------------------------------------------------------------------------
 # INTERFACES
 # ------------------------------------------------------------------------------
@@ -360,16 +500,16 @@ if [ -n "$1" ]; then
             fi
             local_scaling="${4:-1}"
             local_text=$(echo "scale=1; 1.0 * $local_scaling" | bc)
-            local_cursor=$(( 24 * local_scaling ))
+            local_cursor=$(awk "BEGIN { printf \"%d\", 24 * $local_scaling }")
             apply_all "$2" "$3" "$local_scaling" "$local_text" "$local_cursor" "Custom ${2}x${3}"
             ;;
-        status) get_stats; net=$(get_net_speed); cur="NONE"; [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
-                echo "$cur | $TEMP | $PING_STAT | $USERS | $RAM | $THERMAL_ALERT | $net | $IP_ADDR" ;;
+        status) show_status ;;
         info) show_info ;;
         log) show_log "$2" ;;
         doctor) show_doctor ;;
         tailnet) show_tailnet ;;
         xorg) generate_xorg "$2" ;;
+        session) show_session "$2" "$3" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
         *) # Check if it's a profile name (including user-defined)
@@ -401,16 +541,6 @@ get_current_resolution() {
     fi
 }
 
-get_active_display() {
-    xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}'
-}
-
-get_renderer_summary() {
-    local renderer
-    renderer=$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')
-    [ -n "$renderer" ] && echo "$renderer" || echo "unknown"
-}
-
 run_panel_command() {
     local title=$1
     shift
@@ -431,7 +561,7 @@ confirm_action() {
 }
 
 tui_header() {
-    local mode res display renderer tailnet rustdesk_state tailscale_state
+    local mode res display renderer tailnet rustdesk_state tailscale_state warning_data warning_count warning_text
     mode=$(get_current_mode)
     res=$(get_current_resolution)
     display=$(get_active_display)
@@ -439,6 +569,9 @@ tui_header() {
     tailnet=$(get_tailnet_ip)
     rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
     tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
+    warning_data=$(get_warning_summary)
+    warning_count=${warning_data%%|*}
+    warning_text=${warning_data#*|}
     get_stats
     get_toggle_states
 
@@ -450,6 +583,7 @@ Services:   rustdesk=$rustdesk_state  tailscaled=$tailscale_state  users=$USERS
 System:     temp=${THERMAL_ALERT}${TEMP:-unknown}  ram=$RAM  ping=$PING_STAT
 Toggles:    speed=$S_ST  caffeine=$C_ST  theme=$T_ST  night=$N_ST
 Renderer:   $renderer
+Warnings:   $warning_count ($warning_text)
 EOF
 }
 
@@ -511,6 +645,8 @@ tui_performance() {
             "theme" "Toggle dark/light theme (currently $T_ST)" \
             "night" "Toggle warm gamma (currently $N_ST)" \
             "fix" "Fix clipboard, audio, and keyboard layout" \
+            "session-start" "Start optimized Mac session" \
+            "session-stop" "Stop session and restore prior state" \
             "audio" "Restart PulseAudio" \
             "keys" "Reset keyboard layout to US" \
             "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
@@ -519,6 +655,12 @@ tui_performance() {
             speed|caf|theme|night|fix|audio|keys)
                 do_action "$choice"
                 whiptail --title "Action Complete" --msgbox "Ran: $choice" 8 50
+                ;;
+            session-start)
+                session_start mac && whiptail --title "Session Started" --msgbox "Mac session is active." 8 60
+                ;;
+            session-stop)
+                session_stop && whiptail --title "Session Stopped" --msgbox "Prior session state restored where available." 8 70
                 ;;
         esac
     done

@@ -85,6 +85,8 @@ res reset             Reset to 1024x768
 res doctor            Check RustDesk, Tailscale, Xorg, profiles, and symlinks
 res tailnet           Show this host's Tailscale IP and RustDesk direct address
 res xorg [PATH]       Generate Xorg dummy config from profiles
+res session start mac Start an optimized RustDesk session
+res session stop      Restore state captured before session start
 res status            Pipe-delimited stats for applet
 ```
 
@@ -105,7 +107,7 @@ Run `res` with no arguments to open the dashboard. The TUI is organized around t
 *   Device profiles are loaded from `config/profiles.conf`, then overridden by `~/.config/remote-studio/profiles.conf`.
 *   `res xorg` generates Xorg modelines from the same profile definitions used by `res mac` and the applet.
 *   `res doctor` is the first place to check drift between symlinks, RustDesk, Tailscale, Xorg, and the active renderer.
-*   `res status` returns: `Mode | Temp | Ping | Users | RAM | Alerts | Traffic | IP`
+*   `res status` returns: `Mode | Temp | Ping | Users | RAM | WarningCount | WarningText | Traffic | IP`
 *   Use `-symbolic` icons in the applet, emojis in the TUI.
 *   The applet rebuilds its menu on click to reflect current mode (checkmark indicator).
 *   The TUI falls back to a plain text menu when the terminal is too small for whiptail.
