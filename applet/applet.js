@@ -161,6 +161,8 @@ MyApplet.prototype = {
         this._addMenuItem("Privacy Shield (Lock)", "system-lock-screen-symbolic", "privacy");
         this._addMenuItem("Fix Clipboard / Audio / Keys", "applications-system-symbolic", "fix");
         this._addMenuItem("Restart RustDesk Service", "network-server-symbolic", "service");
+        this._addTerminalItem("Run Doctor", "dialog-information-symbolic", "doctor");
+        this._addTerminalItem("Show Tailnet Address", "network-vpn-symbolic", "tailnet");
         this._addMenuItem("Standard Reset (1024x768)", "view-refresh-symbolic", "reset");
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -179,6 +181,14 @@ MyApplet.prototype = {
                 this._buildMenu();
                 return false;
             });
+        });
+        this.menu.addMenuItem(item);
+    },
+
+    _addTerminalItem: function(label, icon, arg) {
+        let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
+        item.connect('activate', () => {
+            Util.spawnCommandLine("x-terminal-emulator -e " + RES_CMD + " " + arg);
         });
         this.menu.addMenuItem(item);
     },

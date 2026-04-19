@@ -1,0 +1,74 @@
+# Remote Studio Roadmap
+
+## Highest Impact
+
+- Replace Xorg dummy software rendering with a GPU-backed path.
+  - Option A: use a physical HDMI dummy plug on the NVIDIA GPU.
+  - Option B: build a reliable NVIDIA-backed virtual Xorg configuration.
+  - Success signal: `res doctor` reports a non-`llvmpipe` OpenGL renderer.
+
+- Make RustDesk config application explicit and safe.
+  - Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
+  - Never overwrite identity, key, password, or trusted-device fields.
+
+- Add a persistent session mode.
+  - `res session start mac` should apply the Mac profile, performance mode, caffeine, RustDesk service checks, and tailnet checks.
+  - `res session stop` should restore prior power, animation, wallpaper, caffeine, and display settings.
+
+## Reliability
+
+- Add `shellcheck` and a GitHub Actions workflow for shell syntax and linting.
+- Add dry-run support to `install.sh system`.
+- Add rollback support for `/etc/X11/xorg.conf` from the latest backup.
+- Add structured profile validation with clear errors for malformed profile lines.
+- Detect stale xrandr modes with matching resolutions but bad refresh rates.
+- Detect whether `~/.config/remote-studio/profiles.conf` overrides built-in profiles.
+- Detect whether Cinnamon loaded the applet from the expected symlink.
+
+## Tailscale
+
+- Add `res tailnet peer <name>` to check direct vs DERP path to a specific device.
+- Add `res tailnet doctor` to summarize DNS, UDP, NAT, DERP, and direct-path status.
+- Prefer Tailscale IPs in status output, but show LAN IP as a secondary detail.
+- Generate the exact RustDesk direct address for the current host.
+
+## RustDesk
+
+- Add config merge logic for `RustDesk_default.toml` and `RustDesk2.toml`.
+- Add a command to restart RustDesk only after config changes are staged.
+- Detect whether the current connection is direct or relayed when RustDesk exposes enough process/socket detail.
+- Add session presets:
+  - `balanced`: adaptive, auto codec, 60 FPS target.
+  - `quality`: higher image quality for text-heavy static work.
+  - `low-bandwidth`: lower resolution and more compression.
+
+## Applet
+
+- Show current resolution and Tailnet IP in the panel tooltip.
+- Add one-click `doctor`, `tailnet`, and session start/stop actions.
+- Highlight warnings from `res doctor` in the panel label.
+- Avoid writing `/tmp/res_status`; use a user runtime path such as `$XDG_RUNTIME_DIR/remote-studio/status`.
+- Make applet device entries data-driven from `config/profiles.conf`.
+
+## Configuration
+
+- Generate `config/xorg.conf` from profiles during release or install instead of manually editing it.
+- Add a `remote-studio.conf` file for defaults such as preferred profile, RustDesk port, and Mac peer name.
+- Split built-in profiles from user overrides more explicitly:
+  - `config/profiles.conf`
+  - `~/.config/remote-studio/profiles.conf`
+  - `~/.config/remote-studio/local.conf`
+
+## Packaging
+
+- Add `make install`, `make doctor`, `make test`, and `make release`.
+- Add a Debian package or Mint-friendly install target.
+- Add version output: `res version`.
+- Add changelog entries for profile/config changes.
+
+## Documentation
+
+- Add screenshots of the Cinnamon applet and terminal doctor output.
+- Document the 13-inch vs 15-inch MacBook Air profile difference.
+- Document the difference between runtime xrandr switching and persistent Xorg config.
+- Document the GPU rendering limitation and recommended HDMI dummy plug setup.

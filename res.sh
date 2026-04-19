@@ -7,6 +7,8 @@
 STATE_FILE="$HOME/.res_state"
 WALLPAPER_BACKUP="$HOME/.wallpaper_backup"
 LOG_FILE="$HOME/.remote_studio.log"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_PROFILES="$ROOT_DIR/config/profiles.conf"
 USER_PROFILES="$HOME/.config/remote-studio/profiles.conf"
 
 # Colors
@@ -17,24 +19,21 @@ YELLOW='\033[1;33m'
 DIM='\033[2m'
 NC='\033[0m'
 
-# Built-in device profiles: label|width|height|scaling|text_scale|cursor
-declare -A PROFILES=(
-    [mac]="MacBook Air 13|2560|1664|1|1.5|48"
-    [ipad]="iPad Pro 11\"|2424|1664|2|1.1|48"
-    [iphonel]="iPhone Landscape|2868|1320|2|1.2|64"
-    [iphonep]="iPhone Portrait|1320|2868|2|1.2|64"
-)
+declare -A PROFILES=()
 
-# Load user-defined profiles from ~/.config/remote-studio/profiles.conf
-# Format: key=label|width|height|scaling|text_scale|cursor
-if [ -f "$USER_PROFILES" ]; then
+load_profiles_file() {
+    local file=$1
+    [ -f "$file" ] || return 0
     while IFS='=' read -r key value; do
         [[ "$key" =~ ^[[:space:]]*# ]] && continue  # skip comments
         [[ -z "$key" || -z "$value" ]] && continue   # skip empty lines
         key=$(echo "$key" | xargs)  # trim whitespace
         PROFILES[$key]="$value"
-    done < "$USER_PROFILES"
-fi
+    done < "$file"
+}
+
+load_profiles_file "$DEFAULT_PROFILES"
+load_profiles_file "$USER_PROFILES"
 
 # ------------------------------------------------------------------------------
 # CORE ENGINE
@@ -42,8 +41,28 @@ fi
 
 log_event() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
 
+mode_name_for() {
+    echo "remote-studio-${1}x${2}-60"
+}
+
+get_tailnet_ip() {
+    if command -v tailscale >/dev/null 2>&1; then
+        tailscale ip -4 2>/dev/null | head -n 1
+    fi
+}
+
+get_primary_ip() {
+    local tailnet_ip
+    tailnet_ip=$(get_tailnet_ip)
+    if [ -n "$tailnet_ip" ]; then
+        echo "$tailnet_ip"
+    else
+        hostname -I | awk '{print $1}'
+    fi
+}
+
 get_stats() {
-    IP_ADDR=$(hostname -I | awk '{print $1}')
+    IP_ADDR=$(get_primary_ip)
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
     RAM=$(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2 }')
     USERS=$(ss -tnp | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
@@ -67,7 +86,7 @@ apply_all() {
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     [ -z "$OUTPUT" ] && return 1
     MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
-    MODE_NAME="remote-studio-${width}x${height}-60"
+    MODE_NAME=$(mode_name_for "$width" "$height")
     MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
     xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null
     xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
@@ -198,6 +217,9 @@ show_help() {
     echo "  keys         Reset keyboard layout (US)"
     echo "  service      Restart RustDesk service (sudo)"
     echo "  reset        Reset to 1024x768"
+    echo "  doctor       Check RustDesk, Tailscale, Xorg, profiles, and symlinks"
+    echo "  tailnet      Show this host's Tailscale IPv4 and RustDesk direct address"
+    echo "  xorg [PATH]  Generate Xorg dummy config from profiles"
     echo ""
     echo "Info:"
     echo "  info         Show current state and toggle status"
@@ -209,6 +231,118 @@ show_help() {
     echo "  Format: key=label|width|height|scaling|text_scale|cursor"
     echo ""
     echo "No arguments launches the interactive TUI."
+}
+
+generate_xorg() {
+    local out="${1:-}"
+    local lines=()
+    local mode_names=()
+    local key label width height scaling text_scale cursor mode_name mode_info mode_params
+
+    for key in mac mac15 fallback; do
+        [ -n "${PROFILES[$key]:-}" ] || continue
+        IFS='|' read -r label width height scaling text_scale cursor <<< "${PROFILES[$key]}"
+        mode_name="${width}x${height}_60.00"
+        mode_info=$(cvt "$width" "$height" 60 | grep Modeline)
+        mode_params=$(echo "$mode_info" | cut -d' ' -f3-)
+        lines+=("    Modeline \"$mode_name\" $mode_params")
+        mode_names+=("\"$mode_name\"")
+    done
+
+    {
+        echo 'Section "Device"'
+        echo '    Identifier  "Configured Video Device"'
+        echo '    Driver      "dummy"'
+        echo '    VideoRam    512000'
+        echo 'EndSection'
+        echo
+        echo 'Section "Monitor"'
+        echo '    Identifier  "Configured Monitor"'
+        printf '%s\n' "${lines[@]}"
+        echo '    Option "PreferredMode" "2560x1664_60.00"'
+        echo 'EndSection'
+        echo
+        echo 'Section "Screen"'
+        echo '    Identifier  "Default Screen"'
+        echo '    Monitor     "Configured Monitor"'
+        echo '    Device      "Configured Video Device"'
+        echo '    DefaultDepth 24'
+        echo '    SubSection "Display"'
+        echo '        Depth 24'
+        echo "        Modes ${mode_names[*]} \"1024x768\""
+        echo '        Virtual 3840 2160'
+        echo '    EndSubSection'
+        echo 'EndSection'
+    } > "${out:-/dev/stdout}"
+}
+
+doctor_check() {
+    local name=$1 status=$2 detail=$3
+    printf "%-22s %-4s %s\n" "$name" "$status" "$detail"
+}
+
+show_doctor() {
+    local output current mode rustdesk_state tailscale_state tailnet_ip renderer profile_link applet_link
+    echo "Remote Studio doctor"
+
+    command -v xrandr >/dev/null 2>&1 && doctor_check "xrandr" "OK" "$(command -v xrandr)" || doctor_check "xrandr" "MISS" "install x11-xserver-utils"
+    command -v cvt >/dev/null 2>&1 && doctor_check "cvt" "OK" "$(command -v cvt)" || doctor_check "cvt" "MISS" "install xserver-xorg-core"
+    command -v bc >/dev/null 2>&1 && doctor_check "bc" "OK" "$(command -v bc)" || doctor_check "bc" "MISS" "install bc"
+
+    current=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
+    [ -n "$current" ] && doctor_check "display" "OK" "$current" || doctor_check "display" "WARN" "no active X display detected"
+
+    renderer=$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')
+    if [ -n "$renderer" ]; then
+        case "$renderer" in
+            *llvmpipe*) doctor_check "renderer" "WARN" "$renderer; software rendering" ;;
+            *) doctor_check "renderer" "OK" "$renderer" ;;
+        esac
+    else
+        doctor_check "renderer" "WARN" "glxinfo unavailable or no GL context"
+    fi
+
+    rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null)
+    [ "$rustdesk_state" = "active" ] && doctor_check "rustdesk" "OK" "service active" || doctor_check "rustdesk" "WARN" "service state: ${rustdesk_state:-unknown}"
+
+    tailscale_state=$(systemctl is-active tailscaled 2>/dev/null)
+    tailnet_ip=$(get_tailnet_ip)
+    if [ "$tailscale_state" = "active" ] && [ -n "$tailnet_ip" ]; then
+        doctor_check "tailscale" "OK" "$tailnet_ip"
+    else
+        doctor_check "tailscale" "WARN" "service=${tailscale_state:-unknown} ip=${tailnet_ip:-none}"
+    fi
+
+    if [ -f "$HOME/.config/rustdesk/RustDesk_default.toml" ]; then
+        grep -q "codec-preference = 'auto'" "$HOME/.config/rustdesk/RustDesk_default.toml" \
+            && doctor_check "rustdesk codec" "OK" "auto codec preference" \
+            || doctor_check "rustdesk codec" "WARN" "expected codec-preference = 'auto'"
+    else
+        doctor_check "rustdesk config" "WARN" "missing RustDesk_default.toml"
+    fi
+
+    profile_link=$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)
+    [ "$profile_link" = "$ROOT_DIR/config/xsessionrc" ] && doctor_check "xsessionrc" "OK" "$profile_link" || doctor_check "xsessionrc" "WARN" "${profile_link:-not linked}"
+
+    applet_link=$(readlink -f "$HOME/.local/share/cinnamon/applets/remote-studio@neek/applet.js" 2>/dev/null)
+    [ "$applet_link" = "$ROOT_DIR/applet/applet.js" ] && doctor_check "applet link" "OK" "$applet_link" || doctor_check "applet link" "WARN" "${applet_link:-not linked}"
+
+    if [ -f "$STATE_FILE" ]; then
+        doctor_check "state" "OK" "$(cat "$STATE_FILE")"
+    else
+        doctor_check "state" "WARN" "no $STATE_FILE yet"
+    fi
+}
+
+show_tailnet() {
+    local ip
+    ip=$(get_tailnet_ip)
+    if [ -z "$ip" ]; then
+        echo "Tailscale IPv4 not available."
+        return 1
+    fi
+    echo "Tailscale IP: $ip"
+    echo "RustDesk direct: $ip:21118"
 }
 
 # ------------------------------------------------------------------------------
@@ -233,6 +367,9 @@ if [ -n "$1" ]; then
                 echo "$cur | $TEMP | $PING_STAT | $USERS | $RAM | $THERMAL_ALERT | $net | $IP_ADDR" ;;
         info) show_info ;;
         log) show_log "$2" ;;
+        doctor) show_doctor ;;
+        tailnet) show_tailnet ;;
+        xorg) generate_xorg "$2" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
         *) # Check if it's a profile name (including user-defined)

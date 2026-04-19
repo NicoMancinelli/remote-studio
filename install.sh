@@ -4,27 +4,88 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPLET_DIR="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
 RUSTDESK_DIR="$HOME/.config/rustdesk"
+CONFIG_DIR="$HOME/.config/remote-studio"
 
-mkdir -p "$APPLET_DIR" "$RUSTDESK_DIR"
+usage() {
+    cat <<EOF
+Remote Studio installer
 
-if [ -w /usr/local/bin ]; then
-    ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
-else
-    sudo ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
-fi
-ln -sfn "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
-ln -sfn "$ROOT_DIR/applet/applet.js" "$APPLET_DIR/applet.js"
-ln -sfn "$ROOT_DIR/applet/metadata.json" "$APPLET_DIR/metadata.json"
+Usage:
+  ./install.sh install      Link user tools and copy default configs
+  ./install.sh system       Install /etc/X11/xorg.conf from profiles
+  ./install.sh doctor       Run res doctor
+  ./install.sh uninstall    Remove user-level links
+  ./install.sh backup       Backup current user/system config files
+EOF
+}
 
-if [ "${1:-}" = "--system" ]; then
+backup_configs() {
+    local stamp backup_dir
+    stamp=$(date +%Y%m%d-%H%M%S)
+    backup_dir="$HOME/.config/remote-studio/backups/$stamp"
+    mkdir -p "$backup_dir"
+
+    [ -f "$HOME/.xsessionrc" ] && cp -P "$HOME/.xsessionrc" "$backup_dir/xsessionrc"
+    [ -f "$RUSTDESK_DIR/RustDesk_default.toml" ] && cp "$RUSTDESK_DIR/RustDesk_default.toml" "$backup_dir/RustDesk_default.toml"
+    [ -f "$RUSTDESK_DIR/RustDesk2.toml" ] && cp "$RUSTDESK_DIR/RustDesk2.toml" "$backup_dir/RustDesk2.toml"
+    if [ -f /etc/X11/xorg.conf ]; then
+        sudo cp /etc/X11/xorg.conf "$backup_dir/xorg.conf" 2>/dev/null || true
+    fi
+
+    echo "Backup written to $backup_dir"
+}
+
+install_user() {
+    mkdir -p "$APPLET_DIR" "$RUSTDESK_DIR" "$CONFIG_DIR"
+
+    if [ -w /usr/local/bin ]; then
+        ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
+    else
+        sudo ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
+    fi
+
+    ln -sfn "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
+    ln -sfn "$ROOT_DIR/applet/applet.js" "$APPLET_DIR/applet.js"
+    ln -sfn "$ROOT_DIR/applet/metadata.json" "$APPLET_DIR/metadata.json"
+
+    if [ ! -f "$CONFIG_DIR/profiles.conf" ]; then
+        install -m 0644 "$ROOT_DIR/profiles.conf.example" "$CONFIG_DIR/profiles.conf"
+    fi
+
+    if [ ! -f "$RUSTDESK_DIR/RustDesk_default.toml" ]; then
+        install -m 0600 "$ROOT_DIR/config/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml"
+    fi
+
+    echo "Remote Studio user install complete."
+}
+
+install_system() {
+    local tmp
+    tmp=$(mktemp)
+    "$ROOT_DIR/res.sh" xorg "$tmp"
     sudo cp /etc/X11/xorg.conf "/etc/X11/xorg.conf.backup-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-    sudo install -m 0644 -o root -g root "$ROOT_DIR/config/xorg.conf" /etc/X11/xorg.conf
-fi
+    sudo install -m 0644 -o root -g root "$tmp" /etc/X11/xorg.conf
+    rm -f "$tmp"
+    echo "Installed /etc/X11/xorg.conf. Restart LightDM or reboot to load it."
+}
 
-if [ ! -f "$RUSTDESK_DIR/RustDesk_default.toml" ]; then
-    install -m 0600 "$ROOT_DIR/config/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml"
-fi
+uninstall_user() {
+    [ "$(readlink -f /usr/local/bin/res 2>/dev/null)" = "$ROOT_DIR/res.sh" ] && sudo rm -f /usr/local/bin/res
+    [ "$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)" = "$ROOT_DIR/config/xsessionrc" ] && rm -f "$HOME/.xsessionrc"
+    [ "$(readlink -f "$APPLET_DIR/applet.js" 2>/dev/null)" = "$ROOT_DIR/applet/applet.js" ] && rm -f "$APPLET_DIR/applet.js"
+    [ "$(readlink -f "$APPLET_DIR/metadata.json" 2>/dev/null)" = "$ROOT_DIR/applet/metadata.json" ] && rm -f "$APPLET_DIR/metadata.json"
+    echo "Remote Studio user links removed."
+}
 
-echo "Remote Studio installed."
-echo "Run 'res mac' to apply the 13-inch MacBook Air profile."
-echo "Run './install.sh --system' to install /etc/X11/xorg.conf."
+case "${1:-install}" in
+    install|user) install_user ;;
+    --system|system) install_system ;;
+    doctor) "$ROOT_DIR/res.sh" doctor ;;
+    backup) backup_configs ;;
+    uninstall) uninstall_user ;;
+    help|-h|--help) usage ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac

@@ -6,12 +6,13 @@ A remote display management suite for Linux Mint (Cinnamon), optimized for Apple
 
 Three components working in sync:
 
-1.  **Core Engine & TUI (`res.sh`)** - Bash script handling xrandr modes, gsettings scaling, and system toggles. Interactive TUI (whiptail) when run directly, silent CLI with arguments.
+1.  **Core Engine & TUI (`res.sh`)** - Bash script handling xrandr modes, gsettings scaling, diagnostics, Xorg config generation, and system toggles. Interactive TUI (whiptail) when run directly, silent CLI with arguments.
 
 2.  **Cinnamon Applet (`applet/`)** - JavaScript panel applet providing a taskbar dashboard with live stats, device preset indicators, and a GUI menu. Polls status asynchronously via `/tmp/res_status`. Symlinked into `~/.local/share/cinnamon/applets/remote-studio@neek/`.
 
-3.  **X11 Configuration (`config/xorg.conf` -> `/etc/X11/xorg.conf`)** - Dummy driver with a `3840x2160` virtual buffer and presets for 13-inch MacBook Air, 15-inch MacBook Air, and 1920x1200 fallback modes.
-4.  **RustDesk Defaults (`config/RustDesk_default.toml`)** - Balanced display defaults for lower-latency RustDesk over Tailscale.
+3.  **Profiles (`config/profiles.conf` + `~/.config/remote-studio/profiles.conf`)** - Device definitions used by runtime switching, login restore, generated Xorg config, and applet state.
+4.  **X11 Configuration (`res xorg` -> `/etc/X11/xorg.conf`)** - Dummy driver with a `3840x2160` virtual buffer and generated modelines for the core profiles.
+5.  **RustDesk Defaults (`config/RustDesk_default.toml`)** - Balanced display defaults for lower-latency RustDesk over Tailscale.
 
 ## Project Layout
 
@@ -25,6 +26,7 @@ Three components working in sync:
         metadata.json   # Applet metadata
     config/
         xsessionrc      # Display restore on login
+        profiles.conf   # Built-in device profiles
         xorg.conf       # Headless Xorg dummy display config
         RustDesk_default.toml
         RustDesk2.options.toml
@@ -42,11 +44,14 @@ Three components working in sync:
 ## Install
 
 ```
-./install.sh
-./install.sh --system
+./install.sh install
+./install.sh system
+./install.sh doctor
+./install.sh backup
+./install.sh uninstall
 ```
 
-The default install links `res`, the Cinnamon applet, and the login restore script. The `--system` install also backs up and replaces `/etc/X11/xorg.conf`; restart LightDM or reboot for that file to be loaded.
+The default install links `res`, the Cinnamon applet, and the login restore script. The `system` install generates Xorg config from the active profiles, backs up `/etc/X11/xorg.conf`, and replaces it; restart LightDM or reboot for that file to be loaded.
 
 For RustDesk over Tailscale, copy the safe defaults from `config/RustDesk_default.toml` into `~/.config/rustdesk/RustDesk_default.toml`, then set `local-ip-addr` in RustDesk's options to this host's Tailscale IPv4 address. Do not commit real RustDesk key, password, or trusted-device files.
 
@@ -77,12 +82,17 @@ res audio             Restart PulseAudio only
 res keys              Reset keyboard layout (US)
 res service           Restart RustDesk service (sudo)
 res reset             Reset to 1024x768
+res doctor            Check RustDesk, Tailscale, Xorg, profiles, and symlinks
+res tailnet           Show this host's Tailscale IP and RustDesk direct address
+res xorg [PATH]       Generate Xorg dummy config from profiles
 res status            Pipe-delimited stats for applet
 ```
 
 ## Developer Notes
 
-*   Device profiles are defined once in the `PROFILES` associative array. Add new devices there.
+*   Device profiles are loaded from `config/profiles.conf`, then overridden by `~/.config/remote-studio/profiles.conf`.
+*   `res xorg` generates Xorg modelines from the same profile definitions used by `res mac` and the applet.
+*   `res doctor` is the first place to check drift between symlinks, RustDesk, Tailscale, Xorg, and the active renderer.
 *   `res status` returns: `Mode | Temp | Ping | Users | RAM | Alerts | Traffic | IP`
 *   Use `-symbolic` icons in the applet, emojis in the TUI.
 *   The applet rebuilds its menu on click to reflect current mode (checkmark indicator).
