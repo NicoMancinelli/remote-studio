@@ -8,7 +8,7 @@
   - Success signal: `res doctor` reports a non-`llvmpipe` OpenGL renderer.
 
 - Make RustDesk config application explicit and safe.
-  - Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
+  - Done: Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
   - Never overwrite identity, key, password, or trusted-device fields.
 
 - Expand session mode.
@@ -28,7 +28,7 @@
 
 ## Tailscale
 
-- Add `res tailnet peer <name>` to check direct vs DERP path to a specific device.
+- Done: Add `res tailnet peer <name>` to check direct vs DERP path to a specific device.
 - Add `res tailnet doctor` to summarize DNS, UDP, NAT, DERP, and direct-path status.
 - Prefer Tailscale IPs in status output, but show LAN IP as a secondary detail.
 - Generate the exact RustDesk direct address for the current host.

@@ -339,6 +339,8 @@ show_help() {
     echo "  reset        Reset to 1024x768"
     echo "  doctor       Check RustDesk, Tailscale, Xorg, profiles, and symlinks"
     echo "  tailnet      Show this host's Tailscale IPv4 and RustDesk direct address"
+    echo "  tailnet peer <name>  Check connection path to a specific peer"
+    echo "  rustdesk [apply|backup|diff]  Manage RustDesk configuration"
     echo "  xorg [PATH]  Generate Xorg dummy config from profiles"
     echo "  session start [PROFILE]  Apply profile, performance mode, and caffeine"
     echo "  session stop             Restore previous session state"
@@ -467,6 +469,59 @@ show_tailnet() {
     echo "RustDesk direct: $ip:21118"
 }
 
+show_rustdesk() {
+    local cmd=$1
+    local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"
+    local source_file="$ROOT_DIR/config/RustDesk_default.toml"
+
+    case "$cmd" in
+        backup)
+            if [ -f "$config_file" ]; then
+                cp "$config_file" "${config_file}.bak.$(date +%F_%T)"
+                echo "Backed up $config_file"
+            else
+                echo "No config found to backup."
+            fi
+            ;;
+        diff)
+            if [ -f "$config_file" ] && [ -f "$source_file" ]; then
+                diff --color=always -u "$config_file" "$source_file" || true
+            else
+                echo "Missing one or both config files for diff."
+            fi
+            ;;
+        apply)
+            if [ -f "$source_file" ]; then
+                mkdir -p "$(dirname "$config_file")"
+                [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"
+                cp "$source_file" "$config_file"
+                echo "Applied $source_file to $config_file"
+                echo "Restarting RustDesk service..."
+                sudo systemctl restart rustdesk
+            else
+                echo "Source config $source_file not found."
+            fi
+            ;;
+        *)
+            echo "Usage: res rustdesk [apply|backup|diff]"
+            ;;
+    esac
+}
+
+show_tailnet_peer() {
+    local peer=$1
+    if [ -z "$peer" ]; then
+        echo "Usage: res tailnet peer <name>"
+        tailscale status --peers=true | head -n 20
+        return
+    fi
+    echo "Checking Tailscale path to $peer..."
+    tailscale ping "$peer"
+    echo
+    echo "Status detail:"
+    tailscale status | grep -i "$peer"
+}
+
 show_session() {
     case "${1:-status}" in
         start) session_start "${2:-mac}" ;;
@@ -507,7 +562,14 @@ if [ -n "$1" ]; then
         info) show_info ;;
         log) show_log "$2" ;;
         doctor) show_doctor ;;
-        tailnet) show_tailnet ;;
+        tailnet)
+            if [ "$2" = "peer" ]; then
+                show_tailnet_peer "$3"
+            else
+                show_tailnet
+            fi
+            ;;
+        rustdesk) show_rustdesk "$2" ;;
         xorg) generate_xorg "$2" ;;
         session) show_session "$2" "$3" ;;
         help|-h|--help) show_help ;;
@@ -672,6 +734,7 @@ tui_diagnostics() {
         choice=$(whiptail --title "Diagnostics" --menu "Inspect the remote desktop stack" 20 86 10 \
             "doctor" "Full Remote Studio health report" \
             "tailnet" "Show Tailscale IP and RustDesk direct address" \
+            "peer" "Check connection path to a specific peer" \
             "info" "Show current state and toggles" \
             "xrandr" "Show active Xorg display modes" \
             "gl" "Show OpenGL renderer details" \
@@ -682,6 +745,11 @@ tui_diagnostics() {
             back) return 0 ;;
             doctor) run_panel_command "Doctor" "$0" doctor ;;
             tailnet) run_panel_command "Tailnet" "$0" tailnet ;;
+            peer)
+                local name
+                name=$(whiptail --title "Tailnet Peer Check" --inputbox "Peer name (e.g. nm4, mba)" 9 50 3>&1 1>&2 2>&3)
+                [ -n "$name" ] && run_panel_command "Peer: $name" "$0" tailnet peer "$name"
+                ;;
             info) run_panel_command "Info" "$0" info ;;
             xrandr) run_panel_command "xrandr" xrandr --verbose ;;
             gl) run_panel_command "OpenGL Renderer" glxinfo -B ;;
@@ -694,8 +762,11 @@ tui_diagnostics() {
 tui_system() {
     local choice tmp
     while true; do
-        choice=$(whiptail --title "System & Config" --menu "System-level operations" 20 86 10 \
+        choice=$(whiptail --title "System & Config" --menu "System-level operations" 20 86 11 \
             "service" "Restart RustDesk service" \
+            "rd-backup" "Backup current RustDesk configuration" \
+            "rd-diff" "Diff current vs template RustDesk config" \
+            "rd-apply" "Apply RustDesk config template and restart" \
             "xorg-preview" "Preview generated Xorg dummy config" \
             "xorg-write" "Write generated Xorg config to config/xorg.conf" \
             "install" "Run user-level install" \
@@ -707,6 +778,12 @@ tui_system() {
             back) return 0 ;;
             service)
                 confirm_action "Restart RustDesk now?" && do_action service
+                ;;
+            rd-backup) run_panel_command "RustDesk Backup" "$0" rustdesk backup ;;
+            rd-diff) run_panel_command "RustDesk Diff" "$0" rustdesk diff ;;
+            rd-apply)
+                confirm_action "Overwrite RustDesk config with template and restart service?" \
+                    && run_panel_command "RustDesk Apply" "$0" rustdesk apply
                 ;;
             xorg-preview)
                 run_panel_command "Generated Xorg Config" "$0" xorg
