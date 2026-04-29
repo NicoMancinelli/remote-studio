@@ -3,25 +3,25 @@
 ## Highest Impact
 
 - Replace Xorg dummy software rendering with a GPU-backed path.
-  - Option A: use a physical HDMI dummy plug on the NVIDIA GPU.
-  - Option B: build a reliable NVIDIA-backed virtual Xorg configuration.
+  - Done: use a physical HDMI dummy plug on the NVIDIA GPU.
+  - Done: build a reliable NVIDIA-backed virtual Xorg configuration.
   - Success signal: `res doctor` reports a non-`llvmpipe` OpenGL renderer.
 
 - Make RustDesk config application explicit and safe.
   - Done: Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
-  - Never overwrite identity, key, password, or trusted-device fields.
+  - Done: Never overwrite identity, key, password, or trusted-device fields.
 
 - Expand session mode.
   - Done: `res session start mac` applies the Mac profile, performance mode, caffeine, and performance power profile where available.
   - Done: `res session stop` restores captured display, speed, caffeine, and balanced power profile where available.
-  - Next: include RustDesk service restart policy and peer-specific Tailscale checks.
+  - Done: include RustDesk service restart policy and peer-specific Tailscale checks.
 
 ## Reliability
 
-- Add `shellcheck` and a GitHub Actions workflow for shell syntax and linting.
+- Done: Add `shellcheck` and a GitHub Actions workflow for shell syntax and linting.
 - Add dry-run support to `install.sh system`.
 - Add rollback support for `/etc/X11/xorg.conf` from the latest backup.
-- Add structured profile validation with clear errors for malformed profile lines.
+- Done: Add structured profile validation with clear errors for malformed profile lines.
 - Detect stale xrandr modes with matching resolutions but bad refresh rates.
 - Detect whether `~/.config/remote-studio/profiles.conf` overrides built-in profiles.
 - Detect whether Cinnamon loaded the applet from the expected symlink.
@@ -29,7 +29,7 @@
 ## Tailscale
 
 - Done: Add `res tailnet peer <name>` to check direct vs DERP path to a specific device.
-- Add `res tailnet doctor` to summarize DNS, UDP, NAT, DERP, and direct-path status.
+- Done: Add `res tailnet doctor` to summarize DNS, UDP, NAT, DERP, and direct-path status.
 - Prefer Tailscale IPs in status output, but show LAN IP as a secondary detail.
 - Generate the exact RustDesk direct address for the current host.
 
@@ -38,7 +38,7 @@
 - Add config merge logic for `RustDesk_default.toml` and `RustDesk2.toml`.
 - Add a command to restart RustDesk only after config changes are staged.
 - Detect whether the current connection is direct or relayed when RustDesk exposes enough process/socket detail.
-- Add session presets:
+- Done: Add session presets:
   - `balanced`: adaptive, auto codec, 60 FPS target.
   - `quality`: higher image quality for text-heavy static work.
   - `low-bandwidth`: lower resolution and more compression.
