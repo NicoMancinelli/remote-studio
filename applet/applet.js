@@ -180,6 +180,14 @@ MyApplet.prototype = {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
+        let rustdeskHeader = new PopupMenu.PopupMenuItem("RUSTDESK PRESETS", { reactive: false, style_class: "popup-subtitle-menu-item" });
+        this.menu.addMenuItem(rustdeskHeader);
+        this._addMenuItem("Apply Quality Preset", "video-display-symbolic", "rustdesk apply quality");
+        this._addMenuItem("Apply Balanced Preset", "video-display-symbolic", "rustdesk apply balanced");
+        this._addMenuItem("Apply Speed Preset", "video-display-symbolic", "rustdesk apply speed");
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
         let systemHeader = new PopupMenu.PopupMenuItem("SYSTEM & SECURITY", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(systemHeader);
         this._addMenuItem("Privacy Shield (Lock)", "system-lock-screen-symbolic", "privacy");
@@ -187,6 +195,7 @@ MyApplet.prototype = {
         this._addMenuItem("Restart RustDesk Service", "network-server-symbolic", "service");
         this._addTerminalItem("Run Doctor", "dialog-information-symbolic", "doctor");
         this._addTerminalItem("Show Tailnet Address", "network-vpn-symbolic", "tailnet");
+        this._addTerminalItem("Tailnet Doctor", "network-wired-symbolic", "tailnet doctor");
         this._addMenuItem("Standard Reset (1024x768)", "view-refresh-symbolic", "reset");
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());

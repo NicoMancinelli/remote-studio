@@ -28,9 +28,24 @@ NC='\033[0m'
 
 declare -A PROFILES=()
 
+validate_profiles() {
+    local file=$1; local errs=0
+    [ -f "$file" ] || return 0
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$key" || -z "$value" ]] && continue
+        if [[ ! "$value" =~ ^[^\|]+\|[0-9]+\|[0-9]+\|[0-9.]+\|[0-9.]+\|[0-9]+$ ]]; then
+            echo "Error: Malformed profile line in $file: $key=$value" >&2
+            errs=$((errs + 1))
+        fi
+    done < "$file"
+    return $errs
+}
+
 load_profiles_file() {
     local file=$1
     [ -f "$file" ] || return 0
+    validate_profiles "$file" || echo "Warning: $file has validation errors." >&2
     while IFS='=' read -r key value; do
         [[ "$key" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$key" || -z "$value" ]] && continue
@@ -273,7 +288,7 @@ generate_xorg() {
         lines+=("    Modeline \"$m\" $mp"); mode_names+=("\"$m\"")
     done
     {
-        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo '    Driver "dummy"'; echo '    VideoRam 512000'; echo 'EndSection'; echo
+        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo '    Driver "nvidia"'; echo '    Option "ConnectedMonitor" "DFP"'; echo 'EndSection'; echo
         echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo '    Option "PreferredMode" "2560x1664_60.00"'; echo 'EndSection'; echo
         echo 'Section "Screen"'; echo '    Identifier "Default Screen"'; echo '    Monitor "Configured Monitor"'; echo '    Device "Configured Video Device"'; echo '    DefaultDepth 24'; echo '    SubSection "Display"'; echo '        Depth 24'; echo "        Modes ${mode_names[*]} \"1024x768\""; echo '        Virtual 3840 2160'; echo '    EndSubSection'; echo 'EndSection'
     } > "${out:-/dev/stdout}"
@@ -311,18 +326,25 @@ merge_rustdesk_config() {
 }
 
 show_rustdesk() {
-    local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"; local source_file="$ROOT_DIR/config/RustDesk_default.toml"
+    local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"
+    local preset=${2:-default}
+    local source_file="$ROOT_DIR/config/RustDesk_${preset}.toml"
     case "$1" in
         backup) [ -f "$config_file" ] && { cp "$config_file" "${config_file}.bak.$(date +%F_%T)"; echo "Backed up."; } || echo "No config."; ;;
-        diff) [ -f "$config_file" ] && [ -f "$source_file" ] && diff --color=always -u "$config_file" "$source_file" || echo "Missing files."; ;;
-        apply) [ -f "$source_file" ] && { mkdir -p "$(dirname "$config_file")"; [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"; merge_rustdesk_config "$source_file" "$config_file"; echo "Merged (Identity preserved)."; sudo systemctl restart rustdesk; } || echo "No template."; ;;
-        *) echo "Usage: res rustdesk [apply|backup|diff]"; ;;
+        diff) [ -f "$config_file" ] && [ -f "$source_file" ] && diff --color=always -u "$config_file" "$source_file" || echo "Missing files (preset: $preset)."; ;;
+        apply) [ -f "$source_file" ] && { mkdir -p "$(dirname "$config_file")"; [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"; merge_rustdesk_config "$source_file" "$config_file"; echo "Merged $preset (Identity preserved)."; sudo systemctl restart rustdesk; } || echo "No template $source_file."; ;;
+        *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>]"; ;;
     esac
 }
 
 show_tailnet_peer() {
     local peer=$1; if [ -z "$peer" ]; then tailscale status --peers=true | head -n 20; return; fi
     echo "Checking $peer..."; tailscale ping "$peer"; echo; tailscale status | grep -i "$peer"
+}
+
+show_tailnet_doctor() {
+    echo "Tailnet Doctor"
+    tailscale netcheck
 }
 
 show_session() {
@@ -342,8 +364,8 @@ if [ -n "$1" ]; then
         log) show_log "$2" ;;
         doctor) show_doctor ;;
         doctor-fix) doctor_fix ;;
-        tailnet) [ "$2" = "peer" ] && show_tailnet_peer "$3" || show_tailnet ;;
-        rustdesk) show_rustdesk "$2" ;;
+        tailnet) [ "$2" = "peer" ] && show_tailnet_peer "$3" || { [ "$2" = "doctor" ] && show_tailnet_doctor || show_tailnet; } ;;
+        rustdesk) show_rustdesk "$2" "$3" ;;
         xorg) generate_xorg "$2" ;;
         session) show_session "$2" "$3" ;;
         help|-h|--help) show_help ;;
@@ -385,15 +407,22 @@ tui_performance() {
 
 tui_diagnostics() {
     while true; do
-        choice=$(whiptail --title "Diagnostics" --menu "Inspect Stack" 20 86 10 "doctor" "Health Report" "fix-all" "Auto-Repair Issues" "tailnet" "Show Address" "peer" "Check Peer" "log" "Event Log" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in back) return 0 ;; doctor) run_panel_command "Doctor" show_doctor ;; fix-all) run_panel_command "Repair" doctor_fix ;; tailnet) run_panel_command "Tailnet" show_tailnet ;; peer) local n=$(whiptail --inputbox "Peer name" 9 50 3>&1 1>&2 2>&3); [ -n "$n" ] && run_panel_command "Peer: $n" show_tailnet_peer "$n" ;; log) run_panel_command "Log" show_log 80 ;; esac
+        choice=$(whiptail --title "Diagnostics" --menu "Inspect Stack" 20 86 11 "doctor" "Health Report" "fix-all" "Auto-Repair Issues" "tailnet" "Show Address" "peer" "Check Peer" "tailnet-doctor" "Tailnet Doctor" "log" "Event Log" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; doctor) run_panel_command "Doctor" show_doctor ;; fix-all) run_panel_command "Repair" doctor_fix ;; tailnet) run_panel_command "Tailnet" show_tailnet ;; peer) local n=$(whiptail --inputbox "Peer name" 9 50 3>&1 1>&2 2>&3); [ -n "$n" ] && run_panel_command "Peer: $n" show_tailnet_peer "$n" ;; tailnet-doctor) run_panel_command "Tailnet Doctor" show_tailnet_doctor ;; log) run_panel_command "Log" show_log 80 ;; esac
     done
 }
 
 tui_rustdesk() {
     while true; do
-        choice=$(whiptail --title "RustDesk" --menu "Config & Service" 20 86 10 "backup" "Backup Config" "diff" "Diff vs Template" "apply" "Safe Merge Template" "service" "Restart Service" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in back) return 0 ;; *) run_panel_command "RustDesk" show_rustdesk "$choice" ;; esac
+        choice=$(whiptail --title "RustDesk" --menu "Config & Service" 20 86 12 "backup" "Backup Config" "diff" "Diff vs Template" "apply-quality" "Apply Quality Preset" "apply-balanced" "Apply Balanced Preset" "apply-speed" "Apply Speed Preset" "service" "Restart Service" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in 
+            back) return 0 ;; 
+            apply-*) 
+                local p=${choice#apply-}
+                confirm_action "Safe-merge $p preset and restart?" && run_panel_command "RustDesk Apply $p" show_rustdesk apply "$p"
+                ;;
+            *) run_panel_command "RustDesk" show_rustdesk "$choice" ;; 
+        esac
     done
 }
 
