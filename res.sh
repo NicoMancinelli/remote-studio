@@ -32,9 +32,9 @@ load_profiles_file() {
     local file=$1
     [ -f "$file" ] || return 0
     while IFS='=' read -r key value; do
-        [[ "$key" =~ ^[[:space:]]*# ]] && continue  # skip comments
-        [[ -z "$key" || -z "$value" ]] && continue   # skip empty lines
-        key=$(echo "$key" | xargs)  # trim whitespace
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$key" || -z "$value" ]] && continue
+        key=$(echo "$key" | xargs)
         PROFILES[$key]="$value"
     done < "$file"
 }
@@ -88,6 +88,16 @@ get_stats() {
     [[ "${TEMP%.*}" -gt 80 ]] 2>/dev/null && THERMAL_ALERT="⚠️ " || THERMAL_ALERT=""
 }
 
+check_auto_speed() {
+    [ -n "$PING_RAW" ] || return 0
+    local speed=$(speed_state)
+    if [ "$PING_RAW" -gt 100 ] && [ "$speed" = "OFF" ]; then
+        log_event "Auto-Speed: ON (Latency ${PING_RAW}ms)"
+        do_action speed
+        notify-send -u normal "Remote Studio" "High latency (${PING_RAW}ms): Speed Mode enabled"
+    fi
+}
+
 get_warning_summary() {
     local warnings=0 messages=() renderer rustdesk_state tailscale_state tailnet_ip current
     renderer=$(get_renderer_summary 2>/dev/null || true)
@@ -96,40 +106,19 @@ get_warning_summary() {
     tailnet_ip=$(get_tailnet_ip)
     current=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
 
-    if [[ "$renderer" == *llvmpipe* ]]; then
-        warnings=$((warnings + 1))
-        messages+=("software-rendering")
-    fi
-    if [ "$rustdesk_state" != "active" ]; then
-        warnings=$((warnings + 1))
-        messages+=("rustdesk-${rustdesk_state:-unknown}")
-    fi
-    if [ "$tailscale_state" != "active" ] || [ -z "$tailnet_ip" ]; then
-        warnings=$((warnings + 1))
-        messages+=("tailscale")
-    fi
-    if [ -z "$current" ]; then
-        warnings=$((warnings + 1))
-        messages+=("display")
-    fi
-    if [ "$warnings" -eq 0 ]; then
-        echo "0|OK"
-    else
-        local IFS=','
-        echo "$warnings|${messages[*]}"
-    fi
+    if [[ "$renderer" == *llvmpipe* ]]; then warnings=$((warnings + 1)); messages+=("software-rendering"); fi
+    if [ "$rustdesk_state" != "active" ]; then warnings=$((warnings + 1)); messages+=("rustdesk-${rustdesk_state:-unknown}"); fi
+    if [ "$tailscale_state" != "active" ] || [ -z "$tailnet_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
+    if [ -z "$current" ]; then warnings=$((warnings + 1)); messages+=("display"); fi
+    if [ "$warnings" -eq 0 ]; then echo "0|OK"; else local IFS=','; echo "$warnings|${messages[*]}"; fi
 }
 
 get_net_speed() {
-    local IFACE
-    IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
-    if [ -z "$IFACE" ] || [ ! -r "/sys/class/net/$IFACE/statistics/rx_bytes" ]; then
-        echo "n/a"
-        return 0
-    fi
-    local R1=$(cat /sys/class/net/$IFACE/statistics/rx_bytes); local T1=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
+    local IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
+    if [ -z "$IFACE" ] || [ ! -r "/sys/class/net/$IFACE/statistics/rx_bytes" ]; then echo "n/a"; return 0; fi
+    local R1=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); local T1=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
     sleep 0.5
-    local R2=$(cat /sys/class/net/$IFACE/statistics/rx_bytes); local T2=$(cat /sys/class/net/$IFACE/statistics/tx_bytes)
+    local R2=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); local T2=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
     local RX=$(( ($R2 - $R1) / 512 )); local TX=$(( ($T2 - $T1) / 512 ))
     echo "↓${RX}KB/s ↑${TX}KB/s"
 }
@@ -173,30 +162,15 @@ do_action() {
                else
                    gsettings set org.cinnamon desktop-effects true; gsettings set org.cinnamon.desktop.interface enable-animations true
                    gsettings set org.cinnamon.desktop.background picture-options "zoom"
-                   if [ -f "$WALLPAPER_BACKUP" ]; then
-                       gsettings set org.cinnamon.desktop.background picture-uri "$(cat "$WALLPAPER_BACKUP")"
-                       rm -f "$WALLPAPER_BACKUP"
-                   fi
+                   if [ -f "$WALLPAPER_BACKUP" ]; then gsettings set org.cinnamon.desktop.background picture-uri "$(cat "$WALLPAPER_BACKUP")"; rm -f "$WALLPAPER_BACKUP"; fi
                    log_event "Speed mode: OFF"
                fi ;;
         theme) cur=$(gsettings get org.cinnamon.desktop.interface gtk-theme | tr -d "'")
-               if [[ "$cur" == *"Dark"* ]]; then
-                   gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y"; log_event "Theme: Light"
-               else
-                   gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark"; log_event "Theme: Dark"
-               fi ;;
+               if [[ "$cur" == *"Dark"* ]]; then gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y"; log_event "Theme: Light"; else gsettings set org.cinnamon.desktop.interface gtk-theme "Mint-Y-Dark"; log_event "Theme: Dark"; fi ;;
         night) gamma=$(xgamma 2>&1 | awk '{print $4}')
-               if [[ "$gamma" == "1.000" ]]; then
-                   xgamma -rgamma 1.0 -ggamma 0.8 -bgamma 0.6; log_event "Night shift: ON"
-               else
-                   xgamma -gamma 1.0; log_event "Night shift: OFF"
-               fi ;;
+               if [[ "$gamma" == "1.000" ]]; then xgamma -rgamma 1.0 -ggamma 0.8 -bgamma 0.6; log_event "Night shift: ON"; else xgamma -gamma 1.0; log_event "Night shift: OFF"; fi ;;
         caf)   cur=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled)
-               if [[ "$cur" == "true" ]]; then
-                   gsettings set org.cinnamon.desktop.screensaver lock-enabled false; log_event "Caffeine: ON"
-               else
-                   gsettings set org.cinnamon.desktop.screensaver lock-enabled true; log_event "Caffeine: OFF"
-               fi ;;
+               if [[ "$cur" == "true" ]]; then gsettings set org.cinnamon.desktop.screensaver lock-enabled false; log_event "Caffeine: ON"; else gsettings set org.cinnamon.desktop.screensaver lock-enabled true; log_event "Caffeine: OFF"; fi ;;
         privacy) cinnamon-screensaver-command -l; xset dpms force off; log_event "Privacy shield activated" ;;
         clip)  echo -n "" | xclip -selection primary; echo -n "" | xclip -selection clipboard ;;
         service) sudo systemctl restart rustdesk; log_event "RustDesk service restarted" ;;
@@ -207,35 +181,17 @@ do_action() {
     esac
 }
 
-speed_state() {
-    local status
-    status=$(gsettings get org.cinnamon desktop-effects 2>/dev/null)
-    [ "$status" = "false" ] && echo "ON" || echo "OFF"
-}
-
-caffeine_state() {
-    local cur
-    cur=$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null)
-    [ "$cur" = "false" ] && echo "ON" || echo "OFF"
-}
+speed_state() { [ "$(gsettings get org.cinnamon desktop-effects 2>/dev/null)" = "false" ] && echo "ON" || echo "OFF"; }
+caffeine_state() { [ "$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null)" = "false" ] && echo "ON" || echo "OFF"; }
 
 session_start() {
     local profile="${1:-mac}"
     mkdir -p "$(dirname "$SESSION_FILE")"
-    {
-        echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"
-        echo "profile=$profile"
-        echo "speed=$(speed_state)"
-        echo "caffeine=$(caffeine_state)"
-        echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"
-    } > "$SESSION_FILE"
-
+    { echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"; echo "profile=$profile"; echo "speed=$(speed_state)"; echo "caffeine=$(caffeine_state)"; echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"; } > "$SESSION_FILE"
     apply_profile "$profile" || return 1
     [ "$(speed_state)" = "ON" ] || do_action speed
     [ "$(caffeine_state)" = "ON" ] || do_action caf
-    if command -v powerprofilesctl >/dev/null 2>&1; then
-        powerprofilesctl set performance 2>/dev/null || true
-    fi
+    if command -v powerprofilesctl >/dev/null 2>&1; then powerprofilesctl set performance 2>/dev/null || true; fi
     log_event "Session start: $profile"
 }
 
@@ -252,9 +208,7 @@ session_stop() {
         grep -q '^caffeine=OFF$' "$SESSION_FILE" && [ "$(caffeine_state)" = "ON" ] && do_action caf
         rm -f "$SESSION_FILE"
     fi
-    if command -v powerprofilesctl >/dev/null 2>&1; then
-        powerprofilesctl set balanced 2>/dev/null || true
-    fi
+    if command -v powerprofilesctl >/dev/null 2>&1; then powerprofilesctl set balanced 2>/dev/null || true; fi
     log_event "Session stop"
 }
 
@@ -267,13 +221,8 @@ get_toggle_states() {
 
 show_info() {
     local cur_mode="None" cur_res="N/A"
-    if [ -f "$STATE_FILE" ]; then
-        cur_mode=$(awk -F"'" '{print $2}' "$STATE_FILE")
-        read w h _ <<< "$(cat "$STATE_FILE")"
-        cur_res="${w}x${h}"
-    fi
-    get_toggle_states
-    get_stats
+    if [ -f "$STATE_FILE" ]; then cur_mode=$(awk -F"'" '{print $2}' "$STATE_FILE"); read w h _ <<< "$(cat "$STATE_FILE")"; cur_res="${w}x${h}"; fi
+    get_toggle_states; get_stats
     echo -e "${CYAN}Remote Studio${NC}"
     echo -e "  Mode:        ${GREEN}${cur_mode}${NC} (${cur_res})"
     echo -e "  Speed Mode:  $([ "$S_ST" == "ON" ] && echo "${GREEN}ON${NC}" || echo "${DIM}OFF${NC}")"
@@ -281,6 +230,7 @@ show_info() {
     echo -e "  Night Shift: $([ "$N_ST" == "ON" ] && echo "${YELLOW}ON${NC}" || echo "${DIM}OFF${NC}")"
     echo -e "  Caffeine:    $([ "$C_ST" == "ON" ] && echo "${GREEN}ON${NC}" || echo "${DIM}OFF${NC}")"
     echo -e "  IP:          ${IP_ADDR}"
+    check_auto_speed
     echo -e "  Temp:        ${THERMAL_ALERT}${TEMP}"
     echo -e "  RAM:         ${RAM}"
     echo -e "  Latency:     ${PING_STAT}"
@@ -289,577 +239,181 @@ show_info() {
 
 show_status() {
     local cur net warning_data warning_count warning_text line
-    get_stats
-    net=$(get_net_speed)
-    cur="NONE"
+    get_stats; net=$(get_net_speed); cur="NONE"
     [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
-    warning_data=$(get_warning_summary)
-    warning_count=${warning_data%%|*}
-    warning_text=${warning_data#*|}
+    warning_data=$(get_warning_summary); warning_count=${warning_data%%|*}; warning_text=${warning_data#*|}
     mkdir -p "$STATUS_DIR"
+    check_auto_speed
     line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $IP_ADDR"
-    printf '%s\n' "$line" > "$STATUS_FILE"
-    printf '%s\n' "$line"
+    printf '%s\n' "$line" > "$STATUS_FILE"; printf '%s\n' "$line"
 }
 
-show_log() {
-    local lines=${1:-20}
-    if [ -f "$LOG_FILE" ]; then
-        tail -n "$lines" "$LOG_FILE"
-    else
-        echo "No log file yet."
-    fi
-}
+show_log() { local lines=${1:-20}; if [ -f "$LOG_FILE" ]; then tail -n "$lines" "$LOG_FILE"; else echo "No log file yet."; fi; }
 
 show_help() {
     echo "Remote Studio - RustDesk display management"
-    echo ""
     echo "Usage: res [command]"
-    echo ""
-    echo "Device Profiles:"
+    echo ""; echo "Device Profiles:"
     for key in $(echo "${!PROFILES[@]}" | tr ' ' '\n' | sort); do
         IFS='|' read -r label width height scaling _ _ <<< "${PROFILES[$key]}"
         printf "  %-12s %s (%dx%d @%sx)\n" "$key" "$label" "$width" "$height" "$scaling"
     done
-    echo ""
-    echo "Custom Resolution:"
-    echo "  custom W H [S] Set arbitrary WxH resolution (S=scaling, default 1)"
-    echo ""
-    echo "Actions:"
-    echo "  speed        Toggle performance mode (animations/wallpaper)"
-    echo "  theme        Toggle OLED dark/light theme"
-    echo "  night        Toggle night shift (warm gamma)"
-    echo "  caf          Toggle caffeine (disable screen lock)"
-    echo "  privacy      Lock screen + blank monitor"
-    echo "  fix          Fix clipboard + audio + keyboard"
-    echo "  clip         Flush clipboard only"
-    echo "  audio        Restart PulseAudio only"
-    echo "  keys         Reset keyboard layout (US)"
-    echo "  service      Restart RustDesk service (sudo)"
-    echo "  reset        Reset to 1024x768"
-    echo "  doctor       Check RustDesk, Tailscale, Xorg, profiles, and symlinks"
-    echo "  tailnet      Show this host's Tailscale IPv4 and RustDesk direct address"
-    echo "  tailnet peer <name>  Check connection path to a specific peer"
-    echo "  rustdesk [apply|backup|diff]  Manage RustDesk configuration"
-    echo "  xorg [PATH]  Generate Xorg dummy config from profiles"
-    echo "  session start [PROFILE]  Apply profile, performance mode, and caffeine"
-    echo "  session stop             Restore previous session state"
-    echo ""
-    echo "Info:"
-    echo "  info         Show current state and toggle status"
-    echo "  status       Print system stats (pipe-delimited, for applet)"
-    echo "  log [N]      Show last N log entries (default 20)"
-    echo "  help         Show this help"
-    echo ""
-    echo "Custom profiles: $USER_PROFILES"
-    echo "  Format: key=label|width|height|scaling|text_scale|cursor"
-    echo ""
-    echo "No arguments launches the interactive TUI."
+    echo ""; echo "Actions:"
+    echo "  speed, theme, night, caf, privacy, fix, reset, service, audio, keys"
+    echo "  doctor, doctor-fix, tailnet, tailnet peer <name>, rustdesk [apply|backup|diff]"
+    echo "  xorg [PATH], session [start|stop|status]"
 }
 
 generate_xorg() {
-    local out="${1:-}"
-    local lines=()
-    local mode_names=()
-    local key label width height scaling text_scale cursor mode_name mode_info mode_params
-
+    local out="${1:-}"; local lines=(); local mode_names=()
     for key in mac mac15 fallback; do
         [ -n "${PROFILES[$key]:-}" ] || continue
-        IFS='|' read -r label width height scaling text_scale cursor <<< "${PROFILES[$key]}"
-        mode_name="${width}x${height}_60.00"
-        mode_info=$(cvt "$width" "$height" 60 | grep Modeline)
-        mode_params=$(echo "$mode_info" | cut -d' ' -f3-)
-        lines+=("    Modeline \"$mode_name\" $mode_params")
-        mode_names+=("\"$mode_name\"")
+        IFS='|' read -r l w h s ts c <<< "${PROFILES[$key]}"
+        local m="${w}x${h}_60.00"; local mi=$(cvt "$w" "$h" 60 | grep Modeline); local mp=$(echo "$mi" | cut -d' ' -f3-)
+        lines+=("    Modeline \"$m\" $mp"); mode_names+=("\"$m\"")
     done
-
     {
-        echo 'Section "Device"'
-        echo '    Identifier  "Configured Video Device"'
-        echo '    Driver      "dummy"'
-        echo '    VideoRam    512000'
-        echo 'EndSection'
-        echo
-        echo 'Section "Monitor"'
-        echo '    Identifier  "Configured Monitor"'
-        printf '%s\n' "${lines[@]}"
-        echo '    Option "PreferredMode" "2560x1664_60.00"'
-        echo 'EndSection'
-        echo
-        echo 'Section "Screen"'
-        echo '    Identifier  "Default Screen"'
-        echo '    Monitor     "Configured Monitor"'
-        echo '    Device      "Configured Video Device"'
-        echo '    DefaultDepth 24'
-        echo '    SubSection "Display"'
-        echo '        Depth 24'
-        echo "        Modes ${mode_names[*]} \"1024x768\""
-        echo '        Virtual 3840 2160'
-        echo '    EndSubSection'
-        echo 'EndSection'
+        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo '    Driver "dummy"'; echo '    VideoRam 512000'; echo 'EndSection'; echo
+        echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo '    Option "PreferredMode" "2560x1664_60.00"'; echo 'EndSection'; echo
+        echo 'Section "Screen"'; echo '    Identifier "Default Screen"'; echo '    Monitor "Configured Monitor"'; echo '    Device "Configured Video Device"'; echo '    DefaultDepth 24'; echo '    SubSection "Display"'; echo '        Depth 24'; echo "        Modes ${mode_names[*]} \"1024x768\""; echo '        Virtual 3840 2160'; echo '    EndSubSection'; echo 'EndSection'
     } > "${out:-/dev/stdout}"
 }
 
-doctor_check() {
-    local name=$1 status=$2 detail=$3
-    printf "%-22s %-4s %s\n" "$name" "$status" "$detail"
-}
-
+doctor_check() { printf "%-22s %-4s %s\n" "$1" "$2" "$3"; }
 show_doctor() {
-    local output current mode rustdesk_state tailscale_state tailnet_ip renderer profile_link applet_link
     echo "Remote Studio doctor"
-
     command -v xrandr >/dev/null 2>&1 && doctor_check "xrandr" "OK" "$(command -v xrandr)" || doctor_check "xrandr" "MISS" "install x11-xserver-utils"
-    command -v cvt >/dev/null 2>&1 && doctor_check "cvt" "OK" "$(command -v cvt)" || doctor_check "cvt" "MISS" "install xserver-xorg-core"
-    command -v bc >/dev/null 2>&1 && doctor_check "bc" "OK" "$(command -v bc)" || doctor_check "bc" "MISS" "install bc"
-
-    current=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
-    [ -n "$current" ] && doctor_check "display" "OK" "$current" || doctor_check "display" "WARN" "no active X display detected"
-
-    renderer=$(glxinfo -B 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')
-    if [ -n "$renderer" ]; then
-        case "$renderer" in
-            *llvmpipe*) doctor_check "renderer" "WARN" "$renderer; software rendering" ;;
-            *) doctor_check "renderer" "OK" "$renderer" ;;
-        esac
-    else
-        doctor_check "renderer" "WARN" "glxinfo unavailable or no GL context"
-    fi
-
-    rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null)
-    [ "$rustdesk_state" = "active" ] && doctor_check "rustdesk" "OK" "service active" || doctor_check "rustdesk" "WARN" "service state: ${rustdesk_state:-unknown}"
-
-    tailscale_state=$(systemctl is-active tailscaled 2>/dev/null)
-    tailnet_ip=$(get_tailnet_ip)
-    if [ "$tailscale_state" = "active" ] && [ -n "$tailnet_ip" ]; then
-        doctor_check "tailscale" "OK" "$tailnet_ip"
-    else
-        doctor_check "tailscale" "WARN" "service=${tailscale_state:-unknown} ip=${tailnet_ip:-none}"
-    fi
-
-    if [ -f "$HOME/.config/rustdesk/RustDesk_default.toml" ]; then
-        grep -q "codec-preference = 'auto'" "$HOME/.config/rustdesk/RustDesk_default.toml" \
-            && doctor_check "rustdesk codec" "OK" "auto codec preference" \
-            || doctor_check "rustdesk codec" "WARN" "expected codec-preference = 'auto'"
-    else
-        doctor_check "rustdesk config" "WARN" "missing RustDesk_default.toml"
-    fi
-
-    profile_link=$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)
-    [ "$profile_link" = "$ROOT_DIR/config/xsessionrc" ] && doctor_check "xsessionrc" "OK" "$profile_link" || doctor_check "xsessionrc" "WARN" "${profile_link:-not linked}"
-
-    applet_link=$(readlink -f "$HOME/.local/share/cinnamon/applets/remote-studio@neek/applet.js" 2>/dev/null)
-    [ "$applet_link" = "$ROOT_DIR/applet/applet.js" ] && doctor_check "applet link" "OK" "$applet_link" || doctor_check "applet link" "WARN" "${applet_link:-not linked}"
-
-    if [ -f "$STATE_FILE" ]; then
-        doctor_check "state" "OK" "$(cat "$STATE_FILE")"
-    else
-        doctor_check "state" "WARN" "no $STATE_FILE yet"
-    fi
+    command -v glxinfo >/dev/null 2>&1 && doctor_check "glxinfo" "OK" "$(command -v glxinfo)" || doctor_check "glxinfo" "MISS" "install mesa-utils"
+    local c=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
+    [ -n "$c" ] && doctor_check "display" "OK" "$c" || doctor_check "display" "WARN" "no active X display"
+    local r=$(get_renderer_summary 2>/dev/null); [[ "$r" == *llvmpipe* ]] && doctor_check "renderer" "WARN" "$r (SW)" || doctor_check "renderer" "OK" "$r"
+    local rs=$(systemctl is-active rustdesk 2>/dev/null); [ "$rs" = "active" ] && doctor_check "rustdesk" "OK" "active" || doctor_check "rustdesk" "WARN" "$rs"
+    local tip=$(get_tailnet_ip); [ -n "$tip" ] && doctor_check "tailscale" "OK" "$tip" || doctor_check "tailscale" "WARN" "no tailnet IP"
 }
 
-show_tailnet() {
-    local ip
-    ip=$(get_tailnet_ip)
-    if [ -z "$ip" ]; then
-        echo "Tailscale IPv4 not available."
-        return 1
-    fi
-    echo "Tailscale IP: $ip"
-    echo "RustDesk direct: $ip:21118"
+doctor_fix() {
+    echo "Fixing common issues..."; local applet_target="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+    [ "$(readlink -f "$HOME/.xsessionrc")" != "$ROOT_DIR/config/xsessionrc" ] && ln -sf "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
+    mkdir -p "$applet_target"; for f in applet.js metadata.json; do [ "$(readlink -f "$applet_target/$f")" != "$ROOT_DIR/applet/$f" ] && ln -sf "$ROOT_DIR/applet/$f" "$applet_target/$f"; done
+    [ ! -f "$HOME/.config/rustdesk/RustDesk_default.toml" ] && { mkdir -p "$HOME/.config/rustdesk"; cp "$ROOT_DIR/config/RustDesk_default.toml" "$HOME/.config/rustdesk/RustDesk_default.toml"; }
+    echo "Done."
+}
+
+show_tailnet() { local ip=$(get_tailnet_ip); [ -z "$ip" ] && { echo "Tailscale IPv4 unavailable."; return 1; }; echo "Tailscale IP: $ip"; echo "RustDesk direct: $ip:21118"; }
+
+merge_rustdesk_config() {
+    local source=$1; local target=$2; [ -f "$target" ] || { cp "$source" "$target"; return 0; }
+    local preserve=("id" "key" "password" "salt" "relay-server" "api-server"); local tmp_preserve=$(mktemp)
+    for field in "${preserve[@]}"; do val=$(grep "^$field =" "$target" || true); [ -n "$val" ] && echo "$val" >> "$tmp_preserve"; done
+    local tmp_new=$(mktemp); cp "$source" "$tmp_new"
+    while read -r line; do field=$(echo "$line" | cut -d' ' -f1); if grep -q "^$field =" "$tmp_new"; then sed -i "s/^$field =.*/$line/" "$tmp_new"; else echo "$line" >> "$tmp_new"; fi; done < "$tmp_preserve"
+    cp "$tmp_new" "$target"; rm "$tmp_preserve" "$tmp_new"
 }
 
 show_rustdesk() {
-    local cmd=$1
-    local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"
-    local source_file="$ROOT_DIR/config/RustDesk_default.toml"
-
-    case "$cmd" in
-        backup)
-            if [ -f "$config_file" ]; then
-                cp "$config_file" "${config_file}.bak.$(date +%F_%T)"
-                echo "Backed up $config_file"
-            else
-                echo "No config found to backup."
-            fi
-            ;;
-        diff)
-            if [ -f "$config_file" ] && [ -f "$source_file" ]; then
-                diff --color=always -u "$config_file" "$source_file" || true
-            else
-                echo "Missing one or both config files for diff."
-            fi
-            ;;
-        apply)
-            if [ -f "$source_file" ]; then
-                mkdir -p "$(dirname "$config_file")"
-                [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"
-                cp "$source_file" "$config_file"
-                echo "Applied $source_file to $config_file"
-                echo "Restarting RustDesk service..."
-                sudo systemctl restart rustdesk
-            else
-                echo "Source config $source_file not found."
-            fi
-            ;;
-        *)
-            echo "Usage: res rustdesk [apply|backup|diff]"
-            ;;
+    local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"; local source_file="$ROOT_DIR/config/RustDesk_default.toml"
+    case "$1" in
+        backup) [ -f "$config_file" ] && { cp "$config_file" "${config_file}.bak.$(date +%F_%T)"; echo "Backed up."; } || echo "No config."; ;;
+        diff) [ -f "$config_file" ] && [ -f "$source_file" ] && diff --color=always -u "$config_file" "$source_file" || echo "Missing files."; ;;
+        apply) [ -f "$source_file" ] && { mkdir -p "$(dirname "$config_file")"; [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"; merge_rustdesk_config "$source_file" "$config_file"; echo "Merged (Identity preserved)."; sudo systemctl restart rustdesk; } || echo "No template."; ;;
+        *) echo "Usage: res rustdesk [apply|backup|diff]"; ;;
     esac
 }
 
 show_tailnet_peer() {
-    local peer=$1
-    if [ -z "$peer" ]; then
-        echo "Usage: res tailnet peer <name>"
-        tailscale status --peers=true | head -n 20
-        return
-    fi
-    echo "Checking Tailscale path to $peer..."
-    tailscale ping "$peer"
-    echo
-    echo "Status detail:"
-    tailscale status | grep -i "$peer"
+    local peer=$1; if [ -z "$peer" ]; then tailscale status --peers=true | head -n 20; return; fi
+    echo "Checking $peer..."; tailscale ping "$peer"; echo; tailscale status | grep -i "$peer"
 }
 
 show_session() {
     case "${1:-status}" in
         start) session_start "${2:-mac}" ;;
         stop) session_stop ;;
-        status)
-            if [ -f "$SESSION_FILE" ]; then
-                cat "$SESSION_FILE"
-            else
-                echo "No active Remote Studio session."
-            fi
-            ;;
-        *)
-            echo "Usage: res session start [PROFILE] | stop | status"
-            return 1
-            ;;
+        status) [ -f "$SESSION_FILE" ] && cat "$SESSION_FILE" || echo "No active session." ;;
+        *) echo "Usage: res session start [PROFILE] | stop | status"; return 1 ;;
     esac
 }
 
-# ------------------------------------------------------------------------------
-# INTERFACES
-# ------------------------------------------------------------------------------
-
 if [ -n "$1" ]; then
     case "$1" in
-        custom)
-            if [ -z "$2" ] || [ -z "$3" ]; then
-                echo "Usage: res custom WIDTH HEIGHT [SCALING]"
-                echo "  e.g. res custom 1920 1080"
-                echo "  e.g. res custom 2560 1440 2"
-                exit 1
-            fi
-            local_scaling="${4:-1}"
-            local_text=$(echo "scale=1; 1.0 * $local_scaling" | bc)
-            local_cursor=$(awk "BEGIN { printf \"%d\", 24 * $local_scaling }")
-            apply_all "$2" "$3" "$local_scaling" "$local_text" "$local_cursor" "Custom ${2}x${3}"
-            ;;
+        custom) [ -z "$2" ] || [ -z "$3" ] && exit 1; local s="${4:-1}"; apply_all "$2" "$3" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${2}x${3}" ;;
         status) show_status ;;
         info) show_info ;;
         log) show_log "$2" ;;
         doctor) show_doctor ;;
-        tailnet)
-            if [ "$2" = "peer" ]; then
-                show_tailnet_peer "$3"
-            else
-                show_tailnet
-            fi
-            ;;
+        doctor-fix) doctor_fix ;;
+        tailnet) [ "$2" = "peer" ] && show_tailnet_peer "$3" || show_tailnet ;;
         rustdesk) show_rustdesk "$2" ;;
         xorg) generate_xorg "$2" ;;
         session) show_session "$2" "$3" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
-        *) # Check if it's a profile name (including user-defined)
-           if [ -n "${PROFILES[$1]}" ]; then
-               apply_profile "$1"
-           else
-               echo "Unknown command: $1"
-               echo "Run 'res help' for usage."
-               exit 1
-           fi ;;
+        *) [ -n "${PROFILES[$1]}" ] && apply_profile "$1" || { echo "Unknown command: $1"; exit 1; } ;;
     esac
     exit 0
 fi
 
-get_current_mode() {
-    if [ -f "$STATE_FILE" ]; then
-        awk -F"'" '{print $2}' "$STATE_FILE"
-    else
-        echo "None"
-    fi
-}
+# ------------------------------------------------------------------------------
+# TUI
+# ------------------------------------------------------------------------------
 
-get_current_resolution() {
-    if [ -f "$STATE_FILE" ]; then
-        read -r w h _ < "$STATE_FILE"
-        echo "${w}x${h}"
-    else
-        xrandr 2>/dev/null | awk '/\*/ {print $1; exit}'
-    fi
-}
-
-run_panel_command() {
-    local title=$1
-    shift
-    local tmp
-    tmp=$(mktemp)
-    {
-        echo "$ $*"
-        echo
-        "$@"
-    } > "$tmp" 2>&1
-    whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90
-    rm -f "$tmp"
-}
-
-confirm_action() {
-    local message=$1
-    whiptail --title "Confirm" --yesno "$message" 10 70
-}
-
-tui_header() {
-    local mode res display renderer tailnet rustdesk_state tailscale_state warning_data warning_count warning_text
-    mode=$(get_current_mode)
-    res=$(get_current_resolution)
-    display=$(get_active_display)
-    renderer=$(get_renderer_summary)
-    tailnet=$(get_tailnet_ip)
-    rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
-    tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
-    warning_data=$(get_warning_summary)
-    warning_count=${warning_data%%|*}
-    warning_text=${warning_data#*|}
-    get_stats
-    get_toggle_states
-
-    cat <<EOF
-Mode:       $mode ($res)
-Display:    ${display:-not detected}
-Tailnet:    ${tailnet:-unavailable}  RustDesk direct: ${tailnet:-<tailscale-ip>}:21118
-Services:   rustdesk=$rustdesk_state  tailscaled=$tailscale_state  users=$USERS
-System:     temp=${THERMAL_ALERT}${TEMP:-unknown}  ram=$RAM  ping=$PING_STAT
-Toggles:    speed=$S_ST  caffeine=$C_ST  theme=$T_ST  night=$N_ST
-Renderer:   $renderer
-Warnings:   $warning_count ($warning_text)
-EOF
-}
-
-show_dashboard() {
-    local tmp
-    tmp=$(mktemp)
-    tui_header > "$tmp"
-    whiptail --title "Remote Studio Dashboard" --scrolltext --textbox "$tmp" 20 90
-    rm -f "$tmp"
-}
+run_panel_command() { local title=$1; shift; local tmp=$(mktemp); { echo "$ $*"; echo; "$@"; } > "$tmp" 2>&1; whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90; rm -f "$tmp"; }
+confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 
 tui_profiles() {
-    local entries=()
-    local key label width height scaling text_scale cursor current choice
-    current=$(get_current_mode)
-
-    for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do
-        IFS='|' read -r label width height scaling text_scale cursor <<< "${PROFILES[$key]}"
-        entries+=("$key" "$label ${width}x${height} scale=${scaling} cursor=${cursor}")
-    done
-    entries+=("custom" "Enter arbitrary resolution and scaling")
-
-    choice=$(whiptail --title "Display Profiles" --backtitle "Current: $current" --menu "Apply a profile" 24 90 14 "${entries[@]}" 3>&1 1>&2 2>&3)
-    [ -z "$choice" ] && return 0
+    local entries=(); local current=$(get_current_mode)
+    for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do IFS='|' read -r label w h s ts c <<< "${PROFILES[$key]}"; entries+=("$key" "$label ${w}x${h} scale=${s}"); done
+    entries+=("custom" "Enter arbitrary resolution")
+    choice=$(whiptail --title "Profiles" --backtitle "Current: $current" --menu "Select Profile" 24 90 14 "${entries[@]}" 3>&1 1>&2 2>&3) || return 0
     [ "$choice" = "custom" ] && { tui_custom_resolution; return 0; }
-
-    if apply_profile "$choice"; then
-        whiptail --title "Profile Applied" --msgbox "Applied ${PROFILES[$choice]}" 9 80
-    else
-        whiptail --title "Profile Failed" --msgbox "Could not apply profile: $choice" 9 80
-    fi
+    apply_profile "$choice" && whiptail --msgbox "Applied $choice" 8 50
 }
 
 tui_custom_resolution() {
-    local width height scaling text_scale cursor
-    width=$(whiptail --title "Custom Resolution" --inputbox "Width" 9 50 "1920" 3>&1 1>&2 2>&3) || return 0
-    height=$(whiptail --title "Custom Resolution" --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
-    scaling=$(whiptail --title "Custom Resolution" --inputbox "Cinnamon scaling factor" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
-    case "$width:$height:$scaling" in
-        *[!0-9:.]*|:*|*:|*::*|*.*:*)
-            whiptail --title "Invalid Input" --msgbox "Use numeric width, height, and scaling." 9 60
-            return 1
-            ;;
-    esac
-    text_scale="$scaling"
-    cursor=$(awk "BEGIN { printf \"%d\", 24 * $scaling }")
-    apply_all "$width" "$height" "$scaling" "$text_scale" "$cursor" "Custom ${width}x${height}" \
-        && whiptail --title "Custom Resolution" --msgbox "Applied ${width}x${height}." 8 60 \
-        || whiptail --title "Custom Resolution" --msgbox "Could not apply ${width}x${height}." 8 60
+    local w=$(whiptail --inputbox "Width" 9 50 "1920" 3>&1 1>&2 2>&3) || return 0
+    local h=$(whiptail --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
+    local s=$(whiptail --inputbox "Scaling" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
+    apply_all "$w" "$h" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${w}x${h}"
 }
 
 tui_performance() {
-    local choice
     while true; do
-        get_toggle_states
-        choice=$(whiptail --title "Performance & Comfort" --menu "Tune the active remote session" 20 82 10 \
-            "speed" "Toggle performance mode (currently $S_ST)" \
-            "caf" "Toggle caffeine / screen lock (currently $C_ST)" \
-            "theme" "Toggle dark/light theme (currently $T_ST)" \
-            "night" "Toggle warm gamma (currently $N_ST)" \
-            "fix" "Fix clipboard, audio, and keyboard layout" \
-            "session-start" "Start optimized Mac session" \
-            "session-stop" "Stop session and restore prior state" \
-            "audio" "Restart PulseAudio" \
-            "keys" "Reset keyboard layout to US" \
-            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in
-            back) return 0 ;;
-            speed|caf|theme|night|fix|audio|keys)
-                do_action "$choice"
-                whiptail --title "Action Complete" --msgbox "Ran: $choice" 8 50
-                ;;
-            session-start)
-                session_start mac && whiptail --title "Session Started" --msgbox "Mac session is active." 8 60
-                ;;
-            session-stop)
-                session_stop && whiptail --title "Session Stopped" --msgbox "Prior session state restored where available." 8 70
-                ;;
-        esac
+        get_toggle_states; choice=$(whiptail --title "Performance" --menu "Adjust Session" 20 82 10 "speed" "Toggle Speed Mode ($S_ST)" "caf" "Toggle Caffeine ($C_ST)" "theme" "Toggle Theme ($T_ST)" "night" "Toggle Night Shift ($N_ST)" "fix" "Fix Common Issues" "session-start" "Start Mac Session" "session-stop" "Stop Session" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; session-start) session_start mac ;; session-stop) session_stop ;; *) do_action "$choice" ;; esac
     done
 }
 
 tui_diagnostics() {
-    local choice
     while true; do
-        choice=$(whiptail --title "Diagnostics" --menu "Inspect the remote desktop stack" 20 86 10 \
-            "doctor" "Full Remote Studio health report" \
-            "tailnet" "Show Tailscale IP and RustDesk direct address" \
-            "peer" "Check connection path to a specific peer" \
-            "info" "Show current state and toggles" \
-            "xrandr" "Show active Xorg display modes" \
-            "gl" "Show OpenGL renderer details" \
-            "services" "Show RustDesk and Tailscale service state" \
-            "log" "Show Remote Studio event log" \
-            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in
-            back) return 0 ;;
-            doctor) run_panel_command "Doctor" "$0" doctor ;;
-            tailnet) run_panel_command "Tailnet" "$0" tailnet ;;
-            peer)
-                local name
-                name=$(whiptail --title "Tailnet Peer Check" --inputbox "Peer name (e.g. nm4, mba)" 9 50 3>&1 1>&2 2>&3)
-                [ -n "$name" ] && run_panel_command "Peer: $name" "$0" tailnet peer "$name"
-                ;;
-            info) run_panel_command "Info" "$0" info ;;
-            xrandr) run_panel_command "xrandr" xrandr --verbose ;;
-            gl) run_panel_command "OpenGL Renderer" glxinfo -B ;;
-            services) run_panel_command "Services" systemctl status rustdesk tailscaled --no-pager ;;
-            log) run_panel_command "Remote Studio Log" "$0" log 80 ;;
-        esac
+        choice=$(whiptail --title "Diagnostics" --menu "Inspect Stack" 20 86 10 "doctor" "Health Report" "fix-all" "Auto-Repair Issues" "tailnet" "Show Address" "peer" "Check Peer" "log" "Event Log" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; doctor) run_panel_command "Doctor" show_doctor ;; fix-all) run_panel_command "Repair" doctor_fix ;; tailnet) run_panel_command "Tailnet" show_tailnet ;; peer) local n=$(whiptail --inputbox "Peer name" 9 50 3>&1 1>&2 2>&3); [ -n "$n" ] && run_panel_command "Peer: $n" show_tailnet_peer "$n" ;; log) run_panel_command "Log" show_log 80 ;; esac
+    done
+}
+
+tui_rustdesk() {
+    while true; do
+        choice=$(whiptail --title "RustDesk" --menu "Config & Service" 20 86 10 "backup" "Backup Config" "diff" "Diff vs Template" "apply" "Safe Merge Template" "service" "Restart Service" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; *) run_panel_command "RustDesk" show_rustdesk "$choice" ;; esac
     done
 }
 
 tui_system() {
-    local choice tmp
     while true; do
-        choice=$(whiptail --title "System & Config" --menu "System-level operations" 20 86 11 \
-            "service" "Restart RustDesk service" \
-            "rd-backup" "Backup current RustDesk configuration" \
-            "rd-diff" "Diff current vs template RustDesk config" \
-            "rd-apply" "Apply RustDesk config template and restart" \
-            "xorg-preview" "Preview generated Xorg dummy config" \
-            "xorg-write" "Write generated Xorg config to config/xorg.conf" \
-            "install" "Run user-level install" \
-            "backup" "Run install.sh backup" \
-            "privacy" "Lock screen and blank monitor" \
-            "reset" "Reset display to 1024x768" \
-            "back" "Return to dashboard" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in
-            back) return 0 ;;
-            service)
-                confirm_action "Restart RustDesk now?" && do_action service
-                ;;
-            rd-backup) run_panel_command "RustDesk Backup" "$0" rustdesk backup ;;
-            rd-diff) run_panel_command "RustDesk Diff" "$0" rustdesk diff ;;
-            rd-apply)
-                confirm_action "Overwrite RustDesk config with template and restart service?" \
-                    && run_panel_command "RustDesk Apply" "$0" rustdesk apply
-                ;;
-            xorg-preview)
-                run_panel_command "Generated Xorg Config" "$0" xorg
-                ;;
-            xorg-write)
-                confirm_action "Regenerate config/xorg.conf from profiles?" && "$0" xorg "$ROOT_DIR/config/xorg.conf" \
-                    && whiptail --title "Xorg Config" --msgbox "Updated config/xorg.conf." 8 60
-                ;;
-            install)
-                run_panel_command "Install" "$ROOT_DIR/install.sh" install
-                ;;
-            backup)
-                run_panel_command "Backup" "$ROOT_DIR/install.sh" backup
-                ;;
-            privacy|reset)
-                confirm_action "Run $choice now?" && do_action "$choice"
-                ;;
-        esac
+        choice=$(whiptail --title "System" --menu "Operations" 20 86 10 "rustdesk" "RustDesk Tools" "xorg-preview" "Preview Xorg" "install" "User Install" "backup" "Full Backup" "reset" "Reset (1024x768)" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; rustdesk) tui_rustdesk ;; xorg-preview) run_panel_command "Xorg" generate_xorg ;; install) run_panel_command "Install" "$ROOT_DIR/install.sh" install ;; backup) run_panel_command "Backup" "$ROOT_DIR/install.sh" backup ;; reset) do_action reset ;; esac
     done
 }
 
 show_text_menu() {
-    local choice
     while true; do
-        clear
-        echo -e "${CYAN}Remote Studio${NC}"
-        tui_header
-        echo
-        echo "1) Profiles       2) Performance    3) Diagnostics"
-        echo "4) System         5) Logs           6) Tailnet"
-        echo "7) Doctor         8) Help           9) Exit"
-        echo
-        read -r -p "Select [1-9]: " choice
-        case "$choice" in
-            1) show_help; read -r -p "Run profile key: " key; [ -n "$key" ] && apply_profile "$key" ;;
-            2) do_action speed ;;
-            3|7) show_doctor; read -r -p "Press enter to continue..." _ ;;
-            4) do_action service ;;
-            5) show_log 40; read -r -p "Press enter to continue..." _ ;;
-            6) show_tailnet; read -r -p "Press enter to continue..." _ ;;
-            8) show_help; read -r -p "Press enter to continue..." _ ;;
-            9) exit 0 ;;
-        esac
+        clear; echo -e "${CYAN}Remote Studio${NC}"; tui_header; echo "1) Profiles 2) Performance 3) Diagnostics 4) System 5) Exit"
+        read -r -p "Select: " choice; case "$choice" in 1) tui_profiles ;; 2) tui_performance ;; 3) tui_diagnostics ;; 4) tui_system ;; 5) exit 0 ;; esac
     done
 }
 
-if ! command -v whiptail >/dev/null 2>&1 || [ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] || [ "$(tput cols 2>/dev/null || echo 0)" -lt 70 ]; then
-    show_text_menu
-fi
-
+[ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] && show_text_menu
 while true; do
-    mode=$(get_current_mode)
-    res=$(get_current_resolution)
-    tailnet=$(get_tailnet_ip)
-    users=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
-
-    choice=$(whiptail --title "Remote Studio" --backtitle "Mode: $mode ($res) | Tailnet: ${tailnet:-none} | Users: $users" --menu "$(tui_header)" 24 92 9 \
-        "profiles" "Apply display profile or custom resolution" \
-        "performance" "Session speed, comfort, and quick fixes" \
-        "diagnostics" "Doctor, Tailscale, xrandr, renderer, logs" \
-        "system" "RustDesk service, Xorg config, install, backups" \
-        "dashboard" "Show dashboard as a scrollable report" \
-        "tailnet" "Print RustDesk direct address" \
-        "doctor" "Run health checks" \
-        "help" "Command reference" \
-        "exit" "Quit" 3>&1 1>&2 2>&3) || exit 0
-
-    case "$choice" in
-        profiles) tui_profiles ;;
-        performance) tui_performance ;;
-        diagnostics) tui_diagnostics ;;
-        system) tui_system ;;
-        dashboard) show_dashboard ;;
-        tailnet) run_panel_command "Tailnet" "$0" tailnet ;;
-        doctor) run_panel_command "Doctor" "$0" doctor ;;
-        help) run_panel_command "Help" "$0" help ;;
-        exit) exit 0 ;;
-    esac
+    m=$(get_current_mode); r=$(get_current_resolution); t=$(get_tailnet_ip); u=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
+    choice=$(whiptail --title "Remote Studio" --backtitle "Mode: $m ($r) | Tailnet: ${t:-none} | Users: $u" --menu "$(tui_header)" 24 92 7 "profiles" "Display Profiles" "performance" "Session Adjust" "diagnostics" "Diagnostics" "system" "System & Tools" "help" "Help" "exit" "Quit" 3>&1 1>&2 2>&3) || exit 0
+    case "$choice" in profiles) tui_profiles ;; performance) tui_performance ;; diagnostics) tui_diagnostics ;; system) tui_system ;; help) run_panel_command "Help" show_help ;; exit) exit 0 ;; esac
 done

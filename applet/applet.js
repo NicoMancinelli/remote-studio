@@ -10,10 +10,14 @@ const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || "/tmp";
 const STATUS_DIR = GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS_DIR) ? RUNTIME_DIR + "/remote-studio" : "/tmp/remote-studio";
 const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE = GLib.get_home_dir() + "/.res_state";
+const ROOT_DIR = GLib.path_get_dirname(GLib.file_read_link(RES_CMD, null) || RES_CMD);
+const PROFILES_FILE = ROOT_DIR + "/config/profiles.conf";
+const USER_PROFILES_FILE = GLib.get_home_dir() + "/.config/remote-studio/profiles.conf";
 
 // Map mode names to panel icons
 const MODE_ICONS = {
     "MacBook Air 13": "computer-symbolic",
+    "MacBook Air 15": "computer-symbolic",
     "iPad Pro 11\"": "tablet-symbolic",
     "iPhone Landscape": "phone-symbolic",
     "iPhone Portrait": "phone-symbolic",
@@ -76,8 +80,13 @@ MyApplet.prototype = {
     },
 
     _updateIcon: function(modeName) {
-        let icon = MODE_ICONS[modeName] || "video-display-symbolic";
-        // Custom resolutions start with "Custom"
+        let icon = "video-display-symbolic";
+        for (let key in MODE_ICONS) {
+            if (modeName.indexOf(key) !== -1) {
+                icon = MODE_ICONS[key];
+                break;
+            }
+        }
         if (modeName && modeName.indexOf("Custom") === 0) icon = "preferences-desktop-display-symbolic";
         this.set_applet_icon_name(icon);
     },
@@ -88,7 +97,6 @@ MyApplet.prototype = {
             if (!res) return;
 
             let info = contents.toString().trim().split(" | ");
-            // INDEX: 0:Mode, 1:Temp, 2:Ping, 3:Users, 4:RAM, 5:WarningCount, 6:WarningText, 7:Traffic, 8:IP
             if (info.length < 9) return;
 
             let label = info[0];
@@ -97,7 +105,6 @@ MyApplet.prototype = {
             let warningCount = parseInt(info[5]) || 0;
             let alerts = (warningCount > 0) ? "\u26A0 " : "";
 
-            // Connection notifications
             if (userCount > this.lastUserCount) {
                 let diff = userCount - this.lastUserCount;
                 Util.spawnCommandLine("notify-send -u critical 'Remote Studio' '" + diff + " user(s) connected'");
@@ -106,9 +113,7 @@ MyApplet.prototype = {
             }
             this.lastUserCount = userCount;
 
-            // Update panel icon based on current mode
             this._updateIcon(label);
-
             this.set_applet_label(alerts + label + user_icon);
             this.set_applet_tooltip(
                 "Remote Studio" +
@@ -120,36 +125,50 @@ MyApplet.prototype = {
                 "\nTraffic: " + info[7] +
                 "\nWarnings: " + info[6]
             );
-        } catch(e) {
-            // Status file not ready yet
-        }
+        } catch(e) {}
+    },
+
+    _loadProfiles: function() {
+        let profiles = [];
+        let files = [PROFILES_FILE, USER_PROFILES_FILE];
+        files.forEach(file => {
+            try {
+                if (GLib.file_test(file, GLib.FileTest.EXISTS)) {
+                    let [res, contents] = GLib.file_get_contents(file);
+                    if (res) {
+                        let lines = contents.toString().split("\n");
+                        lines.forEach(line => {
+                            if (line && line.indexOf("=") !== -1 && line.indexOf("#") !== 0) {
+                                let [key, val] = line.split("=");
+                                let [label, w, h, scale] = val.split("|");
+                                profiles.push({ key: key.trim(), label: label.trim(), width: w, height: h, scale: scale });
+                            }
+                        });
+                    }
+                }
+            } catch(e) {}
+        });
+        return profiles;
     },
 
     _buildMenu: function() {
         this.menu.removeAll();
         let currentMode = this._getCurrentMode();
 
-        // --- DEVICE PRESETS ---
         let presetHeader = new PopupMenu.PopupMenuItem("DEVICE PRESETS", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(presetHeader);
 
-        let devices = [
-            ["MacBook Air 13 (2560x1664)", "computer-symbolic", "mac", "MacBook Air 13"],
-            ["iPad Pro 11\" (3:2)", "tablet-symbolic", "ipad", "iPad Pro 11\""],
-            ["iPhone Landscape", "phone-symbolic", "iphonel", "iPhone Landscape"],
-            ["iPhone Portrait", "phone-symbolic", "iphonep", "iPhone Portrait"]
-        ];
-
-        for (let i = 0; i < devices.length; i++) {
-            let [label, icon, arg, modeName] = devices[i];
-            let isActive = (currentMode === modeName);
-            let displayLabel = isActive ? "\u{2713} " + label : "   " + label;
-            this._addMenuItem(displayLabel, icon, arg);
-        }
+        let profiles = this._loadProfiles();
+        profiles.forEach(p => {
+            let isActive = (currentMode === p.label);
+            let displayLabel = (isActive ? "\u{2713} " : "   ") + p.label + " (" + p.width + "x" + p.height + ")";
+            let icon = "video-display-symbolic";
+            for (let k in MODE_ICONS) { if (p.label.indexOf(k) !== -1) { icon = MODE_ICONS[k]; break; } }
+            this._addMenuItem(displayLabel, icon, p.key);
+        });
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // --- PERFORMANCE & COMFORT ---
         let perfHeader = new PopupMenu.PopupMenuItem("PERFORMANCE & COMFORT", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(perfHeader);
         this._addMenuItem("Toggle Performance Mode", "go-jump-symbolic", "speed");
@@ -161,7 +180,6 @@ MyApplet.prototype = {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // --- SYSTEM & SECURITY ---
         let systemHeader = new PopupMenu.PopupMenuItem("SYSTEM & SECURITY", { reactive: false, style_class: "popup-subtitle-menu-item" });
         this.menu.addMenuItem(systemHeader);
         this._addMenuItem("Privacy Shield (Lock)", "system-lock-screen-symbolic", "privacy");
