@@ -1,4 +1,4 @@
-.PHONY: install doctor test release
+.PHONY: install doctor test release deb
 
 install:
 	./install.sh install
@@ -11,3 +11,6 @@ test:
 
 release:
 	./res.sh xorg config/xorg.conf
+
+deb:
+	bash package/build-deb.sh

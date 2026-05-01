@@ -22,6 +22,7 @@ USER_CONFIG="$HOME/.config/remote-studio/remote-studio.conf"
 
 # Load user config if exists
 if [ -f "$USER_CONFIG" ]; then
+    # shellcheck source=/dev/null
     source "$USER_CONFIG"
 fi
 
@@ -29,6 +30,7 @@ DEFAULT_PROFILE="${DEFAULT_PROFILE:-mac}"
 DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 
 # Colors
+# shellcheck disable=SC2034
 RED='\033[1;31m'
 GREEN='\033[1;32m'
 CYAN='\033[1;36m'
@@ -44,7 +46,7 @@ get_current_mode() {
 
 get_current_resolution() {
     if [ -f "$STATE_FILE" ]; then
-        read w h _ <<< "$(cat "$STATE_FILE")"
+        read -r w h _ <<< "$(cat "$STATE_FILE")"
         echo "${w}x${h}"
     else
         echo "N/A"
@@ -96,6 +98,8 @@ get_tailnet_ip() {
     fi
 }
 
+get_lan_ip() { hostname -I 2>/dev/null | awk '{print $1}'; }
+
 get_primary_ip() {
     local tailnet_ip
     tailnet_ip=$(get_tailnet_ip)
@@ -120,8 +124,8 @@ get_stats() {
     IP_ADDR=$(get_primary_ip)
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
     RAM=$(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2 }')
-    USERS=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
-    
+    USERS=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -ic "ESTAB")
+
     # Connection Path Detection
     if [ "$USERS" -gt 0 ]; then
         if ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | grep -q ":21118"; then
@@ -140,7 +144,8 @@ get_stats() {
 
 check_auto_speed() {
     [ -n "$PING_RAW" ] || return 0
-    local speed=$(speed_state)
+    local speed
+    speed=$(speed_state)
     if [ "$PING_RAW" -gt 100 ] && [ "$speed" = "OFF" ]; then
         log_event "Auto-Speed: ON (Latency ${PING_RAW}ms)"
         do_action speed
@@ -150,6 +155,7 @@ check_auto_speed() {
 
 get_warning_summary() {
     local warnings=0 messages=() renderer rustdesk_state tailscale_state tailnet_ip current
+    local applet_dir applet_ok
     renderer=$(get_renderer_summary 2>/dev/null || true)
     rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
     tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
@@ -160,22 +166,46 @@ get_warning_summary() {
     if [ "$rustdesk_state" != "active" ]; then warnings=$((warnings + 1)); messages+=("rustdesk-${rustdesk_state:-unknown}"); fi
     if [ "$tailscale_state" != "active" ] || [ -z "$tailnet_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
     if [ -z "$current" ]; then warnings=$((warnings + 1)); messages+=("display"); fi
-    if [ "$warnings" -eq 0 ]; then echo "0|OK"; else local IFS=','; echo "$warnings|${messages[*]}"; fi
+
+    applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+    applet_ok=1
+    for f in applet.js metadata.json; do
+        if [ "$(readlink "$applet_dir/$f" 2>/dev/null)" != "$ROOT_DIR/applet/$f" ]; then
+            applet_ok=0; break
+        fi
+    done
+    if [ "$applet_ok" -eq 0 ]; then
+        warnings=$((warnings + 1)); messages+=("applet-symlink")
+        log_event "Warning: applet-symlink missing or incorrect"
+    fi
+
+    if [ "$warnings" -eq 0 ]; then
+        echo "0|OK"
+    else
+        local IFS=','
+        echo "$warnings|${messages[*]}"
+    fi
 }
 
 get_net_speed() {
-    local IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
+    local IFACE
+    IFACE=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
     if [ -z "$IFACE" ] || [ ! -r "/sys/class/net/$IFACE/statistics/rx_bytes" ]; then echo "n/a"; return 0; fi
-    local R1=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); local T1=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
+    local R1 T1 R2 T2 RX TX
+    R1=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes")
+    T1=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
     sleep 0.5
-    local R2=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes"); local T2=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
-    local RX=$(( ($R2 - $R1) / 512 )); local TX=$(( ($T2 - $T1) / 512 ))
+    R2=$(cat "/sys/class/net/$IFACE/statistics/rx_bytes")
+    T2=$(cat "/sys/class/net/$IFACE/statistics/tx_bytes")
+    RX=$(( (R2 - R1) / 512 ))
+    TX=$(( (T2 - T1) / 512 ))
     echo "↓${RX}KB/s ↑${TX}KB/s"
 }
 
 apply_all() {
     local width=$1; local height=$2; local scaling=$3; local text_scale=$4; local cursor=$5; local label=$6
-    local dpi=$(echo "96 * $scaling" | bc)
+    local dpi
+    dpi=$(echo "96 * $scaling" | bc)
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     [ -z "$OUTPUT" ] && return 1
     MODE_NAME=$(mode_name_for "$width" "$height")
@@ -188,6 +218,7 @@ apply_all() {
 
     MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
     MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
+    # shellcheck disable=SC2086
     xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null
     xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
     if xrandr --output "$OUTPUT" --mode "$MODE_NAME"; then
@@ -278,7 +309,11 @@ get_toggle_states() {
 
 show_info() {
     local cur_mode="None" cur_res="N/A"
-    if [ -f "$STATE_FILE" ]; then cur_mode=$(awk -F"'" '{print $2}' "$STATE_FILE"); read w h _ <<< "$(cat "$STATE_FILE")"; cur_res="${w}x${h}"; fi
+    if [ -f "$STATE_FILE" ]; then
+        cur_mode=$(awk -F"'" '{print $2}' "$STATE_FILE")
+        read -r w h _ <<< "$(cat "$STATE_FILE")"
+        cur_res="${w}x${h}"
+    fi
     get_toggle_states; get_stats
     echo -e "${CYAN}Remote Studio${NC}"
     echo -e "  Mode:        ${GREEN}${cur_mode}${NC} (${cur_res})"
@@ -295,12 +330,21 @@ show_info() {
 }
 
 show_status() {
-    local cur net warning_data warning_count warning_text line res
+    local cur net warning_data warning_count warning_text line res tailnet_ip lan_ip combined_ip rustdesk_direct
     get_stats; net=$(get_net_speed); cur=$(get_current_mode); res=$(get_current_resolution)
     warning_data=$(get_warning_summary); warning_count=${warning_data%%|*}; warning_text=${warning_data#*|}
+    tailnet_ip=$(get_tailnet_ip)
+    lan_ip=$(get_lan_ip)
+    if [ -n "$tailnet_ip" ]; then
+        combined_ip="${tailnet_ip}/${lan_ip}"
+        rustdesk_direct="${tailnet_ip}:21118"
+    else
+        combined_ip="${lan_ip}"
+        rustdesk_direct="${lan_ip}:21118"
+    fi
     mkdir -p "$STATUS_DIR"
     check_auto_speed
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $IP_ADDR | $RUSTDESK_CONN_TYPE | $res"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct"
     printf '%s\n' "$line" > "$STATUS_FILE"; printf '%s\n' "$line"
 }
 
@@ -324,8 +368,12 @@ generate_xorg() {
     local out="${1:-}"; local lines=(); local mode_names=()
     for key in mac mac15 fallback; do
         [ -n "${PROFILES[$key]:-}" ] || continue
-        IFS='|' read -r l w h s ts c <<< "${PROFILES[$key]}"
-        local m="${w}x${h}_60.00"; local mi=$(cvt "$w" "$h" 60 | grep Modeline); local mp=$(echo "$mi" | cut -d' ' -f3-)
+        IFS='|' read -r _label w h s _ts _c <<< "${PROFILES[$key]}"
+        local m="${w}x${h}_60.00"
+        local mi
+        mi=$(cvt "$w" "$h" 60 | grep Modeline)
+        local mp
+        mp=$(echo "$mi" | cut -d' ' -f3-)
         lines+=("    Modeline \"$m\" $mp"); mode_names+=("\"$m\"")
     done
     {
@@ -339,7 +387,7 @@ rollback_xorg() {
     local backup_root="$HOME/.config/remote-studio/backups"
     [ -d "$backup_root" ] || { echo "Error: No backup directory found at $backup_root"; return 1; }
     local latest
-    latest=$(ls -1d "$backup_root"/* 2>/dev/null | sort -r | head -n 1)
+    latest=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -n 1)
     if [ -z "$latest" ] || [ ! -f "$latest/xorg.conf" ]; then
         echo "Error: No xorg.conf found in the latest backup: $latest"
         return 1
@@ -351,48 +399,114 @@ rollback_xorg() {
 
 doctor_check() { printf "%-22s %-4s %s\n" "$1" "$2" "$3"; }
 show_doctor() {
+    local c r rs tip
     echo "Remote Studio doctor"
-    command -v xrandr >/dev/null 2>&1 && doctor_check "xrandr" "OK" "$(command -v xrandr)" || doctor_check "xrandr" "MISS" "install x11-xserver-utils"
-    command -v glxinfo >/dev/null 2>&1 && doctor_check "glxinfo" "OK" "$(command -v glxinfo)" || doctor_check "glxinfo" "MISS" "install mesa-utils"
-    local c=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
-    [ -n "$c" ] && doctor_check "display" "OK" "$c" || doctor_check "display" "WARN" "no active X display"
-    local r=$(get_renderer_summary 2>/dev/null); [[ "$r" == *llvmpipe* ]] && doctor_check "renderer" "WARN" "$r (SW)" || doctor_check "renderer" "OK" "$r"
-    local rs=$(systemctl is-active rustdesk 2>/dev/null); [ "$rs" = "active" ] && doctor_check "rustdesk" "OK" "active" || doctor_check "rustdesk" "WARN" "$rs"
-    local tip=$(get_tailnet_ip); [ -n "$tip" ] && doctor_check "tailscale" "OK" "$tip" || doctor_check "tailscale" "WARN" "no tailnet IP"
+    if command -v xrandr >/dev/null 2>&1; then
+        doctor_check "xrandr" "OK" "$(command -v xrandr)"
+    else
+        doctor_check "xrandr" "MISS" "install x11-xserver-utils"
+    fi
+    if command -v glxinfo >/dev/null 2>&1; then
+        doctor_check "glxinfo" "OK" "$(command -v glxinfo)"
+    else
+        doctor_check "glxinfo" "MISS" "install mesa-utils"
+    fi
+    c=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
+    if [ -n "$c" ]; then
+        doctor_check "display" "OK" "$c"
+    else
+        doctor_check "display" "WARN" "no active X display"
+    fi
+    r=$(get_renderer_summary 2>/dev/null)
+    if [[ "$r" == *llvmpipe* ]]; then
+        doctor_check "renderer" "WARN" "$r (SW)"
+    else
+        doctor_check "renderer" "OK" "$r"
+    fi
+    rs=$(systemctl is-active rustdesk 2>/dev/null)
+    if [ "$rs" = "active" ]; then
+        doctor_check "rustdesk" "OK" "active"
+    else
+        doctor_check "rustdesk" "WARN" "$rs"
+    fi
+    tip=$(get_tailnet_ip)
+    if [ -n "$tip" ]; then
+        doctor_check "tailscale" "OK" "$tip"
+    else
+        doctor_check "tailscale" "WARN" "no tailnet IP"
+    fi
 }
 
 doctor_fix() {
-    echo "Fixing common issues..."; local applet_target="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+    local applet_target="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+    echo "Fixing common issues..."
     [ "$(readlink -f "$HOME/.xsessionrc")" != "$ROOT_DIR/config/xsessionrc" ] && ln -sf "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
     mkdir -p "$applet_target"; for f in applet.js metadata.json; do [ "$(readlink -f "$applet_target/$f")" != "$ROOT_DIR/applet/$f" ] && ln -sf "$ROOT_DIR/applet/$f" "$applet_target/$f"; done
     [ ! -f "$HOME/.config/rustdesk/RustDesk_default.toml" ] && { mkdir -p "$HOME/.config/rustdesk"; cp "$ROOT_DIR/config/RustDesk_default.toml" "$HOME/.config/rustdesk/RustDesk_default.toml"; }
     echo "Done."
 }
 
-show_tailnet() { local ip=$(get_tailnet_ip); [ -z "$ip" ] && { echo "Tailscale IPv4 unavailable."; return 1; }; echo "Tailscale IP: $ip"; echo "RustDesk direct: $ip:21118"; }
+show_tailnet() {
+    local ip
+    ip=$(get_tailnet_ip)
+    [ -z "$ip" ] && { echo "Tailscale IPv4 unavailable."; return 1; }
+    echo "Tailscale IP: $ip"
+    echo "RustDesk direct: $ip:21118"
+}
 
 merge_rustdesk_config() {
-    local source=$1; local target=$2; [ -f "$target" ] || { cp "$source" "$target"; return 0; }
-    local preserve=("id" "key" "password" "salt" "relay-server" "api-server"); local tmp_preserve=$(mktemp)
-    for field in "${preserve[@]}"; do val=$(grep "^$field =" "$target" || true); [ -n "$val" ] && echo "$val" >> "$tmp_preserve"; done
-    local tmp_new=$(mktemp); cp "$source" "$tmp_new"
-    while read -r line; do field=$(echo "$line" | cut -d' ' -f1); if grep -q "^$field =" "$tmp_new"; then sed -i "s/^$field =.*/$line/" "$tmp_new"; else echo "$line" >> "$tmp_new"; fi; done < "$tmp_preserve"
-    cp "$tmp_new" "$target"; rm "$tmp_preserve" "$tmp_new"
+    local source=$1 target=$2
+    [ -f "$target" ] || { cp "$source" "$target"; return 0; }
+    local preserve=("id" "key" "password" "salt" "relay-server" "api-server")
+    local tmp_preserve tmp_new val field line
+    tmp_preserve=$(mktemp)
+    for field in "${preserve[@]}"; do
+        val=$(grep "^$field =" "$target" || true)
+        [ -n "$val" ] && echo "$val" >> "$tmp_preserve"
+    done
+    tmp_new=$(mktemp)
+    cp "$source" "$tmp_new"
+    while read -r line; do
+        field=$(echo "$line" | cut -d' ' -f1)
+        if grep -q "^$field =" "$tmp_new"; then
+            sed -i "s/^$field =.*/$line/" "$tmp_new"
+        else
+            echo "$line" >> "$tmp_new"
+        fi
+    done < "$tmp_preserve"
+    cp "$tmp_new" "$target"
+    rm "$tmp_preserve" "$tmp_new"
+}
+
+merge_rustdesk_options() {
+    local source=$1 target=$2
+    [ -f "$target" ] || { cp "$source" "$target"; return 0; }
+    local tmp_new
+    tmp_new=$(mktemp)
+    cp "$source" "$tmp_new"
+    cp "$tmp_new" "$target"
+    rm "$tmp_new"
 }
 
 show_rustdesk() {
     local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"
+    local options_file="$HOME/.config/rustdesk/RustDesk2.options.toml"
+    local options_source="$ROOT_DIR/config/RustDesk2.options.toml"
     local preset=${2:-$DEFAULT_RUSTDESK_PRESET}
     local source_file="$ROOT_DIR/config/RustDesk_${preset}.toml"
     case "$1" in
         backup) [ -f "$config_file" ] && { cp "$config_file" "${config_file}.bak.$(date +%F_%T)"; echo "Backed up."; } || echo "No config."; ;;
         diff) [ -f "$config_file" ] && [ -f "$source_file" ] && diff --color=always -u "$config_file" "$source_file" || echo "Missing files (preset: $preset)."; ;;
-        apply) 
+        apply)
             [ -f "$source_file" ] || { echo "No template $source_file."; return 1; }
             mkdir -p "$(dirname "$config_file")"
             [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"
             merge_rustdesk_config "$source_file" "$config_file"
             echo "Merged $preset (Identity preserved)."
+            if [ -f "$options_source" ]; then
+                merge_rustdesk_options "$options_source" "$options_file"
+                echo "Merged RustDesk2.options (options only, no identity)."
+            fi
             if [ -f "${config_file}.pre-apply" ]; then
                 if cmp -s "$config_file" "${config_file}.pre-apply"; then
                     echo "Configuration unchanged. Skipping restart."
@@ -427,22 +541,42 @@ show_session() {
     esac
 }
 
+handle_custom() {
+    local w=$1 h=$2 s="${3:-1}"
+    [ -z "$w" ] || [ -z "$h" ] && exit 1
+    apply_all "$w" "$h" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${w}x${h}"
+}
+
 if [ -n "$1" ]; then
     case "$1" in
-        custom) [ -z "$2" ] || [ -z "$3" ] && exit 1; local s="${4:-1}"; apply_all "$2" "$3" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${2}x${3}" ;;
+        custom) handle_custom "$2" "$3" "$4" ;;
         status) show_status ;;
         info) show_info ;;
         log) show_log "$2" ;;
         doctor) show_doctor ;;
         doctor-fix) doctor_fix ;;
-        tailnet) [ "$2" = "peer" ] && show_tailnet_peer "$3" || { [ "$2" = "doctor" ] && show_tailnet_doctor || show_tailnet; } ;;
+        tailnet)
+            if [ "$2" = "peer" ]; then
+                show_tailnet_peer "$3"
+            elif [ "$2" = "doctor" ]; then
+                show_tailnet_doctor
+            else
+                show_tailnet
+            fi
+            ;;
         rustdesk) show_rustdesk "$2" "$3" ;;
         xorg) if [ "$2" = "rollback" ]; then rollback_xorg; else generate_xorg "$2"; fi ;;
         session) show_session "$2" "$3" ;;
         version) echo "$VERSION" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
-        *) [ -n "${PROFILES[$1]}" ] && apply_profile "$1" || { echo "Unknown command: $1"; exit 1; } ;;
+        *)
+            if [ -n "${PROFILES[$1]}" ]; then
+                apply_profile "$1"
+            else
+                echo "Unknown command: $1"; exit 1
+            fi
+            ;;
     esac
     exit 0
 fi
@@ -451,11 +585,20 @@ fi
 # TUI
 # ------------------------------------------------------------------------------
 
-run_panel_command() { local title=$1; shift; local tmp=$(mktemp); { echo "$ $*"; echo; "$@"; } > "$tmp" 2>&1; whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90; rm -f "$tmp"; }
+run_panel_command() {
+    local title=$1; shift
+    local tmp
+    tmp=$(mktemp)
+    { echo "$ $*"; echo; "$@"; } > "$tmp" 2>&1
+    whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90
+    rm -f "$tmp"
+}
 confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 
 tui_profiles() {
-    local entries=(); local current=$(get_current_mode)
+    local entries=() current choice
+    current=$(get_current_mode)
+    # shellcheck disable=SC2034
     for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do IFS='|' read -r label w h s ts c <<< "${PROFILES[$key]}"; entries+=("$key" "$label ${w}x${h} scale=${s}"); done
     entries+=("custom" "Enter arbitrary resolution")
     choice=$(whiptail --title "Profiles" --backtitle "Current: $current" --menu "Select Profile" 24 90 14 "${entries[@]}" 3>&1 1>&2 2>&3) || return 0
@@ -464,13 +607,15 @@ tui_profiles() {
 }
 
 tui_custom_resolution() {
-    local w=$(whiptail --inputbox "Width" 9 50 "1920" 3>&1 1>&2 2>&3) || return 0
-    local h=$(whiptail --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
-    local s=$(whiptail --inputbox "Scaling" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
+    local w h s
+    w=$(whiptail --inputbox "Width" 9 50 "1920" 3>&1 1>&2 2>&3) || return 0
+    h=$(whiptail --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
+    s=$(whiptail --inputbox "Scaling" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
     apply_all "$w" "$h" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${w}x${h}"
 }
 
 tui_performance() {
+    local choice
     while true; do
         get_toggle_states; choice=$(whiptail --title "Performance" --menu "Adjust Session" 20 82 10 "speed" "Toggle Speed Mode ($S_ST)" "caf" "Toggle Caffeine ($C_ST)" "theme" "Toggle Theme ($T_ST)" "night" "Toggle Night Shift ($N_ST)" "fix" "Fix Common Issues" "session-start" "Start Mac Session" "session-stop" "Stop Session" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
         case "$choice" in back) return 0 ;; session-start) session_start mac ;; session-stop) session_stop ;; *) do_action "$choice" ;; esac
@@ -478,27 +623,38 @@ tui_performance() {
 }
 
 tui_diagnostics() {
+    local choice n
     while true; do
         choice=$(whiptail --title "Diagnostics" --menu "Inspect Stack" 20 86 11 "doctor" "Health Report" "fix-all" "Auto-Repair Issues" "tailnet" "Show Address" "peer" "Check Peer" "tailnet-doctor" "Tailnet Doctor" "log" "Event Log" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in back) return 0 ;; doctor) run_panel_command "Doctor" show_doctor ;; fix-all) run_panel_command "Repair" doctor_fix ;; tailnet) run_panel_command "Tailnet" show_tailnet ;; peer) local n=$(whiptail --inputbox "Peer name" 9 50 3>&1 1>&2 2>&3); [ -n "$n" ] && run_panel_command "Peer: $n" show_tailnet_peer "$n" ;; tailnet-doctor) run_panel_command "Tailnet Doctor" show_tailnet_doctor ;; log) run_panel_command "Log" show_log 80 ;; esac
+        case "$choice" in
+            back) return 0 ;;
+            doctor) run_panel_command "Doctor" show_doctor ;;
+            fix-all) run_panel_command "Repair" doctor_fix ;;
+            tailnet) run_panel_command "Tailnet" show_tailnet ;;
+            peer) n=$(whiptail --inputbox "Peer name" 9 50 3>&1 1>&2 2>&3); [ -n "$n" ] && run_panel_command "Peer: $n" show_tailnet_peer "$n" ;;
+            tailnet-doctor) run_panel_command "Tailnet Doctor" show_tailnet_doctor ;;
+            log) run_panel_command "Log" show_log 80 ;;
+        esac
     done
 }
 
 tui_rustdesk() {
+    local choice
     while true; do
         choice=$(whiptail --title "RustDesk" --menu "Config & Service" 20 86 12 "backup" "Backup Config" "diff" "Diff vs Template" "apply-quality" "Apply Quality Preset" "apply-balanced" "Apply Balanced Preset" "apply-speed" "Apply Speed Preset" "service" "Restart Service" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in 
-            back) return 0 ;; 
-            apply-*) 
+        case "$choice" in
+            back) return 0 ;;
+            apply-*)
                 local p=${choice#apply-}
                 confirm_action "Safe-merge $p preset and restart?" && run_panel_command "RustDesk Apply $p" show_rustdesk apply "$p"
                 ;;
-            *) run_panel_command "RustDesk" show_rustdesk "$choice" ;; 
+            *) run_panel_command "RustDesk" show_rustdesk "$choice" ;;
         esac
     done
 }
 
 tui_system() {
+    local choice
     while true; do
         choice=$(whiptail --title "System" --menu "Operations" 20 86 10 "rustdesk" "RustDesk Tools" "xorg-preview" "Preview Xorg" "install" "User Install" "backup" "Full Backup" "reset" "Reset (1024x768)" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
         case "$choice" in back) return 0 ;; rustdesk) tui_rustdesk ;; xorg-preview) run_panel_command "Xorg" generate_xorg ;; install) run_panel_command "Install" "$ROOT_DIR/install.sh" install ;; backup) run_panel_command "Backup" "$ROOT_DIR/install.sh" backup ;; reset) do_action reset ;; esac
@@ -506,6 +662,7 @@ tui_system() {
 }
 
 show_text_menu() {
+    local choice
     while true; do
         clear; echo -e "${CYAN}Remote Studio${NC}"; tui_header; echo "1) Profiles 2) Performance 3) Diagnostics 4) System 5) Exit"
         read -r -p "Select: " choice; case "$choice" in 1) tui_profiles ;; 2) tui_performance ;; 3) tui_diagnostics ;; 4) tui_system ;; 5) exit 0 ;; esac
@@ -514,7 +671,8 @@ show_text_menu() {
 
 [ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] && show_text_menu
 while true; do
-    m=$(get_current_mode); r=$(get_current_resolution); t=$(get_tailnet_ip); u=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
+    m=$(get_current_mode); r=$(get_current_resolution); t=$(get_tailnet_ip)
+    u=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -ic "ESTAB")
     choice=$(whiptail --title "Remote Studio" --backtitle "Mode: $m ($r) | Tailnet: ${t:-none} | Users: $u" --menu "$(tui_header)" 24 92 7 "profiles" "Display Profiles" "performance" "Session Adjust" "diagnostics" "Diagnostics" "system" "System & Tools" "help" "Help" "exit" "Quit" 3>&1 1>&2 2>&3) || exit 0
     case "$choice" in profiles) tui_profiles ;; performance) tui_performance ;; diagnostics) tui_diagnostics ;; system) tui_system ;; help) run_panel_command "Help" show_help ;; exit) exit 0 ;; esac
 done
