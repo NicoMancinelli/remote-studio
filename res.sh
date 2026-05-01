@@ -19,6 +19,7 @@ else
 fi
 STATUS_FILE="$STATUS_DIR/status"
 USER_CONFIG="$HOME/.config/remote-studio/remote-studio.conf"
+RECENT_PROFILES_FILE="$HOME/.config/remote-studio/recent_profiles"
 _WARN_CACHE=""
 _WARN_CACHE_TS=0
 
@@ -728,7 +729,7 @@ if [ -n "$1" ]; then
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
         *)
             if [ -n "${PROFILES[$1]}" ]; then
-                apply_profile "$1"
+                apply_profile "$1" && record_recent_profile "$1"
             else
                 echo "Unknown command: $1"; exit 1
             fi
@@ -780,8 +781,52 @@ run_panel_command() {
 }
 confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 
+tui_quick() {
+    local choice
+    while true; do
+        choice=$(whiptail --title "Quick Actions" \
+            --menu "Common workflows:" \
+            22 80 10 \
+            "mac-quality"     "Start Mac session + apply Quality preset" \
+            "mac-balanced"    "Start Mac session + apply Balanced preset" \
+            "mac-speed"       "Start Mac session + apply Speed preset" \
+            "ipad-balanced"   "Start iPad session + apply Balanced preset" \
+            "stop-reset"      "Stop session + reset display" \
+            "fix-and-restart" "Fix clipboard/audio/keys + restart RustDesk" \
+            "back"            "Main Menu" \
+            3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            mac-quality)
+                session_start mac && show_rustdesk apply quality
+                whiptail --msgbox "Mac session started with Quality preset." 7 60
+                ;;
+            mac-balanced)
+                session_start mac && show_rustdesk apply balanced
+                whiptail --msgbox "Mac session started with Balanced preset." 7 60
+                ;;
+            mac-speed)
+                session_start mac && show_rustdesk apply speed
+                whiptail --msgbox "Mac session started with Speed preset." 7 60
+                ;;
+            ipad-balanced)
+                session_start ipad && show_rustdesk apply balanced
+                whiptail --msgbox "iPad session started with Balanced preset." 7 60
+                ;;
+            stop-reset)
+                session_stop && do_action reset
+                whiptail --msgbox "Session stopped, display reset." 7 55
+                ;;
+            fix-and-restart)
+                do_action fix && do_action service
+                whiptail --msgbox "Fixed clipboard/audio/keys, RustDesk restarted." 7 65
+                ;;
+        esac
+    done
+}
+
 tui_dashboard() {
-    local lines cols body mode res_str renderer rustdesk_st tailscale_st session_info
+    local lines cols body mode res_str renderer rustdesk_st tailscale_st session_info recent_log
     while true; do
         lines=$(tput lines 2>/dev/null || echo 24)
         cols=$(tput cols 2>/dev/null || echo 90)
@@ -813,6 +858,14 @@ NETWORK
 SERVICES
   RustDesk:    ${rustdesk_st}
   Tailscale:   ${tailscale_st}"
+        recent_log=""
+        if [ -f "$LOG_FILE" ]; then
+            recent_log=$(tail -n 3 "$LOG_FILE" 2>/dev/null | sed 's/^/  /')
+        fi
+        [ -n "$recent_log" ] && body="${body}
+
+RECENT EVENTS
+${recent_log}"
         if ! whiptail --title "Dashboard — Remote Studio v${VERSION}" \
             --yes-button "Refresh" --no-button "Close" \
             --yesno "$body" "$lines" "$cols"; then
@@ -820,6 +873,45 @@ SERVICES
         fi
         # "Refresh" selected — loop and redraw
         _WARN_CACHE=""  # invalidate cache so next render is fresh
+    done
+}
+
+tui_log_viewer() {
+    local choice filter tmp tlines tcols
+    while true; do
+        choice=$(whiptail --title "Event Log" \
+            --menu "View ~/.remote_studio.log:" \
+            18 70 6 \
+            "tail-20"   "Last 20 entries" \
+            "tail-80"   "Last 80 entries" \
+            "tail-200"  "Last 200 entries" \
+            "filter"    "Search / filter" \
+            "all"       "Full log" \
+            "back"      "Return" \
+            3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back)      return 0 ;;
+            tail-20)   run_panel_command "Log (last 20)"  show_log 20 ;;
+            tail-80)   run_panel_command "Log (last 80)"  show_log 80 ;;
+            tail-200)  run_panel_command "Log (last 200)" show_log 200 ;;
+            filter)
+                filter=$(whiptail --inputbox "Pattern to grep for (case-insensitive):" 9 60 "" 3>&1 1>&2 2>&3) || continue
+                [ -z "$filter" ] && continue
+                tmp=$(mktemp)
+                if [ -f "$LOG_FILE" ]; then
+                    grep -i "$filter" "$LOG_FILE" | tail -n 200 > "$tmp"
+                fi
+                if [ ! -s "$tmp" ]; then
+                    whiptail --msgbox "No matches for '$filter'." 7 55
+                else
+                    tlines=$(tput lines 2>/dev/null || echo 24); tcols=$(tput cols 2>/dev/null || echo 90)
+                    tlines=$(( tlines > 6 ? tlines - 2 : 22 )); tcols=$(( tcols > 10 ? tcols - 4 : 86 ))
+                    whiptail --title "Log filter: $filter" --scrolltext --textbox "$tmp" "$tlines" "$tcols"
+                fi
+                rm -f "$tmp"
+                ;;
+            all)       run_panel_command "Full Log" cat "$LOG_FILE" ;;
+        esac
     done
 }
 
@@ -841,9 +933,38 @@ sorted_profile_keys() {
     done
 }
 
+record_recent_profile() {
+    local key=$1
+    [ -z "$key" ] && return 0
+    mkdir -p "$(dirname "$RECENT_PROFILES_FILE")"
+    local tmp; tmp=$(mktemp)
+    # New entry first, then existing entries minus this one, capped at 5 lines
+    {
+        printf '%s\n' "$key"
+        [ -f "$RECENT_PROFILES_FILE" ] && grep -v "^${key}\$" "$RECENT_PROFILES_FILE" || true
+    } | head -n 5 > "$tmp"
+    mv "$tmp" "$RECENT_PROFILES_FILE"
+}
+
+get_recent_profiles() {
+    [ -f "$RECENT_PROFILES_FILE" ] && cat "$RECENT_PROFILES_FILE" || true
+}
+
 tui_profiles() {
-    local entries=() current choice key label w h s src marker
+    local entries=() current choice key label w h s src marker recent_keys recent_count=0 rk
     current=$(get_current_mode)
+    recent_keys=$(get_recent_profiles)
+    if [ -n "$recent_keys" ]; then
+        while IFS= read -r rk; do
+            [ -z "$rk" ] && continue
+            [ -z "${PROFILES[$rk]+x}" ] && continue  # profile no longer exists
+            IFS='|' read -r label w h s _ _ <<< "${PROFILES[$rk]}"
+            marker=""; [ "$label" = "$current" ] && marker="✓ "
+            entries+=("$rk" "★ ${marker}${label} ${w}x${h}")
+            recent_count=$((recent_count + 1))
+        done <<< "$recent_keys"
+        [ "$recent_count" -gt 0 ] && entries+=("" "─── all profiles ───")
+    fi
     for key in $(sorted_profile_keys); do
         IFS='|' read -r label w h s _ _ <<< "${PROFILES[$key]}"
         if [ -f "$USER_PROFILES" ] && grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null; then
@@ -857,13 +978,15 @@ tui_profiles() {
     entries+=("custom"  "  Enter arbitrary resolution")
     entries+=("manage"  "  Manage user profiles")
     choice=$(whiptail --title "Profiles" --backtitle "Active: $current" \
-        --menu "Select a profile to apply:" 24 90 16 "${entries[@]}" \
+        --menu "Select a profile to apply:" 24 90 18 "${entries[@]}" \
         3>&1 1>&2 2>&3) || return 0
+    [ -z "$choice" ] && return 0  # ignore the divider line
     case "$choice" in
         custom) tui_custom_resolution; return 0 ;;
         manage) tui_manage_profiles;   return 0 ;;
         *)
             if apply_profile "$choice"; then
+                record_recent_profile "$choice"
                 IFS='|' read -r label _ <<< "${PROFILES[$choice]}"
                 whiptail --msgbox "Applied: $label" 7 50
             else
@@ -1103,7 +1226,7 @@ tui_diagnostics() {
             "rustdesk-status" "RustDesk Session Status" \
             "profiles"        "List All Profiles (with source)" \
             "watch-status"    "Session / Watcher State" \
-            "log"             "Event Log (last 80 lines)" \
+            "log"             "Event Log Viewer" \
             "back"            "Main Menu" \
             3>&1 1>&2 2>&3) || return 0
         case "$choice" in
@@ -1120,7 +1243,7 @@ tui_diagnostics() {
                     whiptail --msgbox "No active session state." 7 50
                 fi
                 ;;
-            log)              run_panel_command "Log" show_log 80 ;;
+            log)              tui_log_viewer ;;
         esac
     done
 }
@@ -1204,7 +1327,8 @@ show_text_menu() {
         echo "  1) Profiles       4) System"
         echo "  2) Performance    5) Dashboard"
         echo "  3) Diagnostics    6) Tailnet"
-        echo "  7) Help           0) Exit"
+        echo "  7) Quick Actions  8) Help"
+        echo "  0) Exit"
         echo ""
         read -r -p "Select: " choice
         case "$choice" in
@@ -1214,7 +1338,8 @@ show_text_menu() {
             4) tui_system ;;
             5) tui_dashboard ;;
             6) tui_tailnet ;;
-            7) show_help | "${PAGER:-less}" ;;
+            7) tui_quick ;;
+            8) show_help | "${PAGER:-less}" ;;
             0|q|Q) exit 0 ;;
         esac
     done
@@ -1230,8 +1355,9 @@ while true; do
     choice=$(whiptail \
         --title "Remote Studio v${VERSION}" \
         --backtitle "Mode: $_m ($_r)  |  IP: ${_t:-none}  |  Users: $_u  |  Warnings: $_w" \
-        --menu "$(tui_header)" 24 92 9 \
+        --menu "$(tui_header)" 24 92 10 \
         "profiles"    "Display Profiles" \
+        "quick"       "Quick Actions" \
         "performance" "Session & Toggles" \
         "diagnostics" "Diagnostics" \
         "tailnet"     "Tailscale Network" \
@@ -1242,6 +1368,7 @@ while true; do
         3>&1 1>&2 2>&3) || exit 0
     case "$choice" in
         profiles)    tui_profiles ;;
+        quick)       tui_quick ;;
         performance) tui_performance ;;
         diagnostics) tui_diagnostics ;;
         tailnet)     tui_tailnet ;;
