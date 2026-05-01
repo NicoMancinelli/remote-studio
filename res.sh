@@ -735,29 +735,128 @@ if [ -n "$1" ]; then
     exit 0
 fi
 
+tui_header() {
+    local mode res_str ip wdata wcount wmsg renderer rustdesk_st session_st
+    mode=$(get_current_mode)
+    res_str=$(get_current_resolution)
+    ip=$(get_tailnet_ip)
+    wdata=$(get_warning_summary); wcount=${wdata%%|*}; wmsg=${wdata#*|}
+    renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
+    rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
+    session_st="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
+    printf 'Mode: %s (%s)  |  IP: %s  |  Session: %s\nRustDesk: %s  |  Renderer: %s  |  Warnings: %s' \
+        "$mode" "$res_str" "${ip:-none}" "$session_st" \
+        "$rustdesk_st" "$renderer" \
+        "$wcount$([ "$wcount" -gt 0 ] && printf ' (%s)' "$wmsg" || true)"
+}
+
 # ------------------------------------------------------------------------------
 # TUI
 # ------------------------------------------------------------------------------
 
 run_panel_command() {
     local title=$1; shift
-    local tmp
+    local tmp lines cols
     tmp=$(mktemp)
+    lines=$(tput lines 2>/dev/null || echo 24)
+    cols=$(tput cols 2>/dev/null || echo 90)
+    lines=$(( lines > 6 ? lines - 2 : 22 ))
+    cols=$(( cols > 10 ? cols - 4 : 86 ))
     { echo "$ $*"; echo; "$@"; } > "$tmp" 2>&1
-    whiptail --title "$title" --scrolltext --textbox "$tmp" 24 90
+    whiptail --title "$title" --scrolltext --textbox "$tmp" "$lines" "$cols"
     rm -f "$tmp"
 }
 confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 
+tui_dashboard() {
+    local lines cols body mode res_str renderer rustdesk_st tailscale_st session_info
+    lines=$(tput lines 2>/dev/null || echo 24)
+    cols=$(tput cols 2>/dev/null || echo 90)
+    lines=$(( lines > 6 ? lines - 2 : 22 ))
+    cols=$(( cols > 10 ? cols - 4 : 86 ))
+    get_stats
+    get_toggle_states
+    mode=$(get_current_mode)
+    res_str=$(get_current_resolution)
+    renderer=$(get_renderer_summary 2>/dev/null)
+    rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
+    tailscale_st=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
+    session_info="$([ -f "$SESSION_FILE" ] && grep '^profile=' "$SESSION_FILE" | cut -d= -f2 || echo "none")"
+    body="Remote Studio v${VERSION}
+
+DISPLAY
+  Mode:        ${mode} (${res_str})
+  Renderer:    ${renderer}
+  Speed Mode:  ${S_ST}   Caffeine: ${C_ST}   Theme: ${T_ST}   Night: ${N_ST}
+
+SESSION
+  Active:      ${session_info}
+  Users:       ${USERS} connected   (${RUSTDESK_CONN_TYPE:-N/A})
+
+NETWORK
+  IP:          ${IP_ADDR}
+  Latency:     ${PING_STAT}
+
+SERVICES
+  RustDesk:    ${rustdesk_st}
+  Tailscale:   ${tailscale_st}
+
+SYSTEM
+  CPU Temp:    ${THERMAL_ALERT}${TEMP}
+  RAM:         ${RAM}"
+    whiptail --title "Dashboard — Remote Studio v${VERSION}" --msgbox "$body" "$lines" "$cols"
+}
+
 tui_profiles() {
-    local entries=() current choice
+    local entries=() current choice key label w h s src marker
     current=$(get_current_mode)
-    # shellcheck disable=SC2034
-    for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do IFS='|' read -r label w h s ts c <<< "${PROFILES[$key]}"; entries+=("$key" "$label ${w}x${h} scale=${s}"); done
-    entries+=("custom" "Enter arbitrary resolution")
-    choice=$(whiptail --title "Profiles" --backtitle "Current: $current" --menu "Select Profile" 24 90 14 "${entries[@]}" 3>&1 1>&2 2>&3) || return 0
-    [ "$choice" = "custom" ] && { tui_custom_resolution; return 0; }
-    apply_profile "$choice" && whiptail --msgbox "Applied $choice" 8 50
+    for key in $(printf '%s\n' "${!PROFILES[@]}" | sort); do
+        IFS='|' read -r label w h s _ _ <<< "${PROFILES[$key]}"
+        if [ -f "$USER_PROFILES" ] && grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null; then
+            src="[user]"
+        else
+            src="[built-in]"
+        fi
+        marker=""; [ "$label" = "$current" ] && marker="✓ "
+        entries+=("$key" "${marker}${label} ${w}x${h} x${s} ${src}")
+    done
+    entries+=("custom"  "  Enter arbitrary resolution")
+    entries+=("manage"  "  Manage user profiles")
+    choice=$(whiptail --title "Profiles" --backtitle "Active: $current" \
+        --menu "Select a profile to apply:" 24 90 16 "${entries[@]}" \
+        3>&1 1>&2 2>&3) || return 0
+    case "$choice" in
+        custom) tui_custom_resolution; return 0 ;;
+        manage) tui_manage_profiles;   return 0 ;;
+        *)
+            if apply_profile "$choice"; then
+                IFS='|' read -r label _ <<< "${PROFILES[$choice]}"
+                whiptail --msgbox "Applied: $label" 7 50
+            else
+                whiptail --msgbox "Failed to apply profile '$choice'." 7 50
+            fi
+            ;;
+    esac
+}
+
+tui_manage_profiles() {
+    [ -f "$USER_PROFILES" ] || { whiptail --msgbox "No user profiles at:\n$USER_PROFILES" 8 60; return 0; }
+    local entries=() choice key value label w h s
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^# ]] && continue; [[ -z "$key" ]] && continue
+        IFS='|' read -r label w h s _ _ <<< "$value"
+        entries+=("$key" "$label ${w}x${h} x${s}")
+    done < "$USER_PROFILES"
+    [ ${#entries[@]} -eq 0 ] && { whiptail --msgbox "No user profiles found." 7 50; return 0; }
+    entries+=("back" "Return")
+    choice=$(whiptail --title "User Profiles" --menu "Select a profile to delete:" \
+        20 70 10 "${entries[@]}" 3>&1 1>&2 2>&3) || return 0
+    [ "$choice" = "back" ] && return 0
+    if whiptail --yesno "Delete user profile '$choice'?" 8 50; then
+        sed -i "/^${choice}=/d" "$USER_PROFILES"
+        log_event "User profile deleted: $choice"
+        whiptail --msgbox "Deleted profile '$choice'." 7 50
+    fi
 }
 
 tui_custom_resolution() {
@@ -766,6 +865,44 @@ tui_custom_resolution() {
     h=$(whiptail --inputbox "Height" 9 50 "1200" 3>&1 1>&2 2>&3) || return 0
     s=$(whiptail --inputbox "Scaling" 9 50 "1" 3>&1 1>&2 2>&3) || return 0
     apply_all "$w" "$h" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${w}x${h}"
+}
+
+tui_config() {
+    local choice key val lines cols
+    lines=$(tput lines 2>/dev/null || echo 24)
+    cols=$(tput cols 2>/dev/null || echo 90)
+    lines=$(( lines > 6 ? lines - 2 : 22 ))
+    cols=$(( cols > 10 ? cols - 4 : 86 ))
+    while true; do
+        choice=$(whiptail --title "Config" --menu "Remote Studio Configuration" "$lines" "$cols" 6 \
+            "show"    "Show current config" \
+            "profile" "Set DEFAULT_PROFILE" \
+            "preset"  "Set DEFAULT_RUSTDESK_PRESET" \
+            "auto"    "Toggle AUTO_SESSION" \
+            "back"    "Main Menu" \
+            3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            show) run_panel_command "Config" show_config show ;;
+            profile)
+                val=$(whiptail --inputbox "DEFAULT_PROFILE (current: ${DEFAULT_PROFILE})" 9 60 "${DEFAULT_PROFILE}" 3>&1 1>&2 2>&3) || continue
+                [ -n "$val" ] && show_config set DEFAULT_PROFILE "$val" && whiptail --msgbox "Set DEFAULT_PROFILE=$val" 7 50
+                ;;
+            preset)
+                val=$(whiptail --inputbox "DEFAULT_RUSTDESK_PRESET (current: ${DEFAULT_RUSTDESK_PRESET})" 9 60 "${DEFAULT_RUSTDESK_PRESET}" 3>&1 1>&2 2>&3) || continue
+                [ -n "$val" ] && show_config set DEFAULT_RUSTDESK_PRESET "$val" && whiptail --msgbox "Set DEFAULT_RUSTDESK_PRESET=$val" 7 50
+                ;;
+            auto)
+                local current_auto
+                current_auto=$(show_config get AUTO_SESSION 2>/dev/null)
+                if [ "$current_auto" = "true" ]; then
+                    show_config set AUTO_SESSION false && whiptail --msgbox "AUTO_SESSION=false" 7 50
+                else
+                    show_config set AUTO_SESSION true && whiptail --msgbox "AUTO_SESSION=true" 7 50
+                fi
+                ;;
+        esac
+    done
 }
 
 tui_performance() {
