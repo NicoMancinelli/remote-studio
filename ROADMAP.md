@@ -19,11 +19,11 @@
 ## Reliability
 
 - Done: Add `shellcheck` and a GitHub Actions workflow for shell syntax and linting.
-- Add dry-run support to `install.sh system`.
-- Add rollback support for `/etc/X11/xorg.conf` from the latest backup.
+- Done: Add dry-run support to `install.sh system`.
+- Done: Add rollback support for `/etc/X11/xorg.conf` from the latest backup.
 - Done: Add structured profile validation with clear errors for malformed profile lines.
-- Detect stale xrandr modes with matching resolutions but bad refresh rates.
-- Detect whether `~/.config/remote-studio/profiles.conf` overrides built-in profiles.
+- Done: Detect stale xrandr modes with matching resolutions but bad refresh rates.
+- Done: Detect whether `~/.config/remote-studio/profiles.conf` overrides built-in profiles.
 - Detect whether Cinnamon loaded the applet from the expected symlink.
 
 ## Tailscale
@@ -36,8 +36,8 @@
 ## RustDesk
 
 - Add config merge logic for `RustDesk_default.toml` and `RustDesk2.toml`.
-- Add a command to restart RustDesk only after config changes are staged.
-- Detect whether the current connection is direct or relayed when RustDesk exposes enough process/socket detail.
+- Done: Add a command to restart RustDesk only after config changes are staged.
+- Done: Detect whether the current connection is direct or relayed when RustDesk exposes enough process/socket detail.
 - Done: Add session presets:
   - `balanced`: adaptive, auto codec, 60 FPS target.
   - `quality`: higher image quality for text-heavy static work.
@@ -45,7 +45,7 @@
 
 ## Applet
 
-- Show current resolution and Tailnet IP in the panel tooltip.
+- Done: Show current resolution and Tailnet IP in the panel tooltip.
 - Add one-click `doctor`, `tailnet`, and session start/stop actions.
 - Done: highlight warning count from `res status` in the panel label.
 - Done: avoid writing `/tmp/res_status`; use a user runtime path such as `$XDG_RUNTIME_DIR/remote-studio/status`.
@@ -54,7 +54,7 @@
 ## Configuration
 
 - Generate `config/xorg.conf` from profiles during release or install instead of manually editing it.
-- Add a `remote-studio.conf` file for defaults such as preferred profile, RustDesk port, and Mac peer name.
+- Done: Add a `remote-studio.conf` file for defaults such as preferred profile, RustDesk port, and Mac peer name.
 - Split built-in profiles from user overrides more explicitly:
   - `config/profiles.conf`
   - `~/.config/remote-studio/profiles.conf`
@@ -62,9 +62,9 @@
 
 ## Packaging
 
-- Add `make install`, `make doctor`, `make test`, and `make release`.
+- Done: Add `make install`, `make doctor`, `make test`, and `make release`.
 - Add a Debian package or Mint-friendly install target.
-- Add version output: `res version`.
+- Done: Add version output: `res version`.
 - Add changelog entries for profile/config changes.
 
 ## Documentation

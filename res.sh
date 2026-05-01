@@ -4,6 +4,7 @@
 # RUSTDESK REMOTE STUDIO V8.0
 # ==============================================================================
 
+VERSION="8.0"
 STATE_FILE="$HOME/.res_state"
 WALLPAPER_BACKUP="$HOME/.wallpaper_backup"
 LOG_FILE="$HOME/.remote_studio.log"
@@ -17,6 +18,15 @@ else
     STATUS_DIR="/tmp/remote-studio-${UID:-$(id -u)}"
 fi
 STATUS_FILE="$STATUS_DIR/status"
+USER_CONFIG="$HOME/.config/remote-studio/remote-studio.conf"
+
+# Load user config if exists
+if [ -f "$USER_CONFIG" ]; then
+    source "$USER_CONFIG"
+fi
+
+DEFAULT_PROFILE="${DEFAULT_PROFILE:-mac}"
+DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 
 # Colors
 RED='\033[1;31m'
@@ -27,6 +37,19 @@ DIM='\033[2m'
 NC='\033[0m'
 
 declare -A PROFILES=()
+
+get_current_mode() {
+    [ -f "$STATE_FILE" ] && awk -F"'" '{print $2}' "$STATE_FILE" || echo "None"
+}
+
+get_current_resolution() {
+    if [ -f "$STATE_FILE" ]; then
+        read w h _ <<< "$(cat "$STATE_FILE")"
+        echo "${w}x${h}"
+    else
+        echo "N/A"
+    fi
+}
 
 validate_profiles() {
     local file=$1; local errs=0
@@ -98,6 +121,18 @@ get_stats() {
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
     RAM=$(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2 }')
     USERS=$(ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | wc -l)
+    
+    # Connection Path Detection
+    if [ "$USERS" -gt 0 ]; then
+        if ss -tnp 2>/dev/null | grep -i "rustdesk" | grep -i "ESTAB" | grep -q ":21118"; then
+            RUSTDESK_CONN_TYPE="Direct"
+        else
+            RUSTDESK_CONN_TYPE="Relayed"
+        fi
+    else
+        RUSTDESK_CONN_TYPE="None"
+    fi
+
     PING_RAW=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
     [ -z "$PING_RAW" ] && PING_STAT="Offline" || PING_STAT="${PING_RAW}ms"
     [[ "${TEMP%.*}" -gt 80 ]] 2>/dev/null && THERMAL_ALERT="⚠️ " || THERMAL_ALERT=""
@@ -143,8 +178,15 @@ apply_all() {
     local dpi=$(echo "96 * $scaling" | bc)
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     [ -z "$OUTPUT" ] && return 1
-    MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
     MODE_NAME=$(mode_name_for "$width" "$height")
+
+    # Remove stale modes with same name or resolution
+    for m in $(xrandr | awk '{print $1}' | grep -E "^${MODE_NAME}\$|^${width}x${height}(_.*)?$"); do
+        xrandr --delmode "$OUTPUT" "$m" 2>/dev/null || true
+        xrandr --rmmode "$m" 2>/dev/null || true
+    done
+
+    MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
     MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
     xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null
     xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
@@ -200,7 +242,7 @@ speed_state() { [ "$(gsettings get org.cinnamon desktop-effects 2>/dev/null)" = 
 caffeine_state() { [ "$(gsettings get org.cinnamon.desktop.screensaver lock-enabled 2>/dev/null)" = "false" ] && echo "ON" || echo "OFF"; }
 
 session_start() {
-    local profile="${1:-mac}"
+    local profile="${1:-$DEFAULT_PROFILE}"
     mkdir -p "$(dirname "$SESSION_FILE")"
     { echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"; echo "profile=$profile"; echo "speed=$(speed_state)"; echo "caffeine=$(caffeine_state)"; echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"; } > "$SESSION_FILE"
     apply_profile "$profile" || return 1
@@ -253,13 +295,12 @@ show_info() {
 }
 
 show_status() {
-    local cur net warning_data warning_count warning_text line
-    get_stats; net=$(get_net_speed); cur="NONE"
-    [ -f "$STATE_FILE" ] && cur=$(awk -F"'" '{print $2}' "$STATE_FILE")
+    local cur net warning_data warning_count warning_text line res
+    get_stats; net=$(get_net_speed); cur=$(get_current_mode); res=$(get_current_resolution)
     warning_data=$(get_warning_summary); warning_count=${warning_data%%|*}; warning_text=${warning_data#*|}
     mkdir -p "$STATUS_DIR"
     check_auto_speed
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $IP_ADDR"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $IP_ADDR | $RUSTDESK_CONN_TYPE | $res"
     printf '%s\n' "$line" > "$STATUS_FILE"; printf '%s\n' "$line"
 }
 
@@ -292,6 +333,20 @@ generate_xorg() {
         echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo '    Option "PreferredMode" "2560x1664_60.00"'; echo 'EndSection'; echo
         echo 'Section "Screen"'; echo '    Identifier "Default Screen"'; echo '    Monitor "Configured Monitor"'; echo '    Device "Configured Video Device"'; echo '    DefaultDepth 24'; echo '    SubSection "Display"'; echo '        Depth 24'; echo "        Modes ${mode_names[*]} \"1024x768\""; echo '        Virtual 3840 2160'; echo '    EndSubSection'; echo 'EndSection'
     } > "${out:-/dev/stdout}"
+}
+
+rollback_xorg() {
+    local backup_root="$HOME/.config/remote-studio/backups"
+    [ -d "$backup_root" ] || { echo "Error: No backup directory found at $backup_root"; return 1; }
+    local latest
+    latest=$(ls -1d "$backup_root"/* 2>/dev/null | sort -r | head -n 1)
+    if [ -z "$latest" ] || [ ! -f "$latest/xorg.conf" ]; then
+        echo "Error: No xorg.conf found in the latest backup: $latest"
+        return 1
+    fi
+    echo "Restoring /etc/X11/xorg.conf from $latest/xorg.conf..."
+    sudo cp "$latest/xorg.conf" /etc/X11/xorg.conf
+    echo "Rollback complete. Restart LightDM or reboot to apply."
 }
 
 doctor_check() { printf "%-22s %-4s %s\n" "$1" "$2" "$3"; }
@@ -327,12 +382,28 @@ merge_rustdesk_config() {
 
 show_rustdesk() {
     local config_file="$HOME/.config/rustdesk/RustDesk_default.toml"
-    local preset=${2:-default}
+    local preset=${2:-$DEFAULT_RUSTDESK_PRESET}
     local source_file="$ROOT_DIR/config/RustDesk_${preset}.toml"
     case "$1" in
         backup) [ -f "$config_file" ] && { cp "$config_file" "${config_file}.bak.$(date +%F_%T)"; echo "Backed up."; } || echo "No config."; ;;
         diff) [ -f "$config_file" ] && [ -f "$source_file" ] && diff --color=always -u "$config_file" "$source_file" || echo "Missing files (preset: $preset)."; ;;
-        apply) [ -f "$source_file" ] && { mkdir -p "$(dirname "$config_file")"; [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"; merge_rustdesk_config "$source_file" "$config_file"; echo "Merged $preset (Identity preserved)."; sudo systemctl restart rustdesk; } || echo "No template $source_file."; ;;
+        apply) 
+            [ -f "$source_file" ] || { echo "No template $source_file."; return 1; }
+            mkdir -p "$(dirname "$config_file")"
+            [ -f "$config_file" ] && cp "$config_file" "${config_file}.pre-apply"
+            merge_rustdesk_config "$source_file" "$config_file"
+            echo "Merged $preset (Identity preserved)."
+            if [ -f "${config_file}.pre-apply" ]; then
+                if cmp -s "$config_file" "${config_file}.pre-apply"; then
+                    echo "Configuration unchanged. Skipping restart."
+                else
+                    echo "Configuration changed. Restarting rustdesk..."
+                    sudo systemctl restart rustdesk
+                fi
+            else
+                sudo systemctl restart rustdesk
+            fi
+            ;;
         *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>]"; ;;
     esac
 }
@@ -366,8 +437,9 @@ if [ -n "$1" ]; then
         doctor-fix) doctor_fix ;;
         tailnet) [ "$2" = "peer" ] && show_tailnet_peer "$3" || { [ "$2" = "doctor" ] && show_tailnet_doctor || show_tailnet; } ;;
         rustdesk) show_rustdesk "$2" "$3" ;;
-        xorg) generate_xorg "$2" ;;
+        xorg) if [ "$2" = "rollback" ]; then rollback_xorg; else generate_xorg "$2"; fi ;;
         session) show_session "$2" "$3" ;;
+        version) echo "$VERSION" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
         *) [ -n "${PROFILES[$1]}" ] && apply_profile "$1" || { echo "Unknown command: $1"; exit 1; } ;;

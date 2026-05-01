@@ -118,9 +118,11 @@ MyApplet.prototype = {
             this.set_applet_tooltip(
                 "Remote Studio" +
                 "\nMode: " + label +
+                "\nRes: " + (info[10] || "N/A") +
+                "\nPath: " + (info[9] || "N/A") +
+                "\nIP: " + info[8] +
                 "\nTemp: " + info[1] +
                 "\nRAM: " + info[4] +
-                "\nIP: " + info[8] +
                 "\nLatency: " + info[2] +
                 "\nTraffic: " + info[7] +
                 "\nWarnings: " + info[6]
