@@ -49,29 +49,27 @@ mkdir -p "$PKG_DIR"
 # Install destination paths (inside staging tree)
 # ---------------------------------------------------------------------------
 
+copy_file() {
+    local src=$1 dst=$2 mode=$3
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    chmod "$mode" "$dst"
+}
+
 # /usr/local/bin/res
-install -D -m 0755 "$ROOT_DIR/res.sh" \
-    "$PKG_DIR/usr/local/bin/res"
+copy_file "$ROOT_DIR/res.sh" "$PKG_DIR/usr/local/bin/res" 0755
 
 # Cinnamon applet
-install -D -m 0644 "$ROOT_DIR/applet/applet.js" \
-    "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/applet.js"
-install -D -m 0644 "$ROOT_DIR/applet/metadata.json" \
-    "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/metadata.json"
+copy_file "$ROOT_DIR/applet/applet.js"    "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/applet.js"    0644
+copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/metadata.json" 0644
 
 # Shared data — config templates
-install -D -m 0644 "$ROOT_DIR/config/profiles.conf" \
-    "$PKG_DIR/usr/share/remote-studio/profiles.conf"
-install -D -m 0644 "$ROOT_DIR/config/RustDesk_default.toml" \
-    "$PKG_DIR/usr/share/remote-studio/RustDesk_default.toml"
-install -D -m 0644 "$ROOT_DIR/config/RustDesk_balanced.toml" \
-    "$PKG_DIR/usr/share/remote-studio/RustDesk_balanced.toml"
-install -D -m 0644 "$ROOT_DIR/config/RustDesk_quality.toml" \
-    "$PKG_DIR/usr/share/remote-studio/RustDesk_quality.toml"
-install -D -m 0644 "$ROOT_DIR/config/RustDesk_speed.toml" \
-    "$PKG_DIR/usr/share/remote-studio/RustDesk_speed.toml"
-install -D -m 0644 "$ROOT_DIR/config/xorg.conf" \
-    "$PKG_DIR/usr/share/remote-studio/xorg.conf"
+copy_file "$ROOT_DIR/config/profiles.conf"          "$PKG_DIR/usr/share/remote-studio/profiles.conf"          0644
+copy_file "$ROOT_DIR/config/RustDesk_default.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_default.toml"  0644
+copy_file "$ROOT_DIR/config/RustDesk_balanced.toml" "$PKG_DIR/usr/share/remote-studio/RustDesk_balanced.toml" 0644
+copy_file "$ROOT_DIR/config/RustDesk_quality.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_quality.toml"  0644
+copy_file "$ROOT_DIR/config/RustDesk_speed.toml"    "$PKG_DIR/usr/share/remote-studio/RustDesk_speed.toml"    0644
+copy_file "$ROOT_DIR/config/xorg.conf"              "$PKG_DIR/usr/share/remote-studio/xorg.conf"              0644
 
 # ---------------------------------------------------------------------------
 # DEBIAN/control

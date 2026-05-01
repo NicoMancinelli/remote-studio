@@ -121,6 +121,7 @@ MyApplet.prototype = {
                 "\nRes: " + (info[10] || "N/A") +
                 "\nPath: " + (info[9] || "N/A") +
                 "\nIP: " + info[8] +
+                "\nDirect: " + (info[11] || "N/A") +
                 "\nTemp: " + info[1] +
                 "\nRAM: " + info[4] +
                 "\nLatency: " + info[2] +
