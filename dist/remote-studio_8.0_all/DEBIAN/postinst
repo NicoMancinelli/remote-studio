@@ -1,9 +1,0 @@
-#!/bin/bash
-set -e
-
-chmod 755 /usr/local/bin/res
-
-echo ""
-echo "Remote Studio installed successfully."
-echo "Run 'res doctor' to verify your setup."
-echo ""

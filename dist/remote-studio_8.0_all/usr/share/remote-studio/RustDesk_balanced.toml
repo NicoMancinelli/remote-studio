@@ -1,8 +1,0 @@
-[options]
-i444 = 'Y'
-image_quality = 'balanced'
-codec-preference = 'auto'
-view_style = 'adaptive'
-enable-abr = 'Y'
-enable-hwcodec = 'Y'
-custom-fps = '60'
