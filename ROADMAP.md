@@ -1,75 +1,87 @@
 # Remote Studio Roadmap
 
-## Highest Impact
+Items are grouped by theme and loosely ordered by impact within each section.
 
-- Replace Xorg dummy software rendering with a GPU-backed path.
-  - Done: use a physical HDMI dummy plug on the NVIDIA GPU.
-  - Done: build a reliable NVIDIA-backed virtual Xorg configuration.
-  - Success signal: `res doctor` reports a non-`llvmpipe` OpenGL renderer.
+---
 
-- Make RustDesk config application explicit and safe.
-  - Done: Add `res rustdesk apply`, `res rustdesk backup`, and `res rustdesk diff`.
-  - Done: Never overwrite identity, key, password, or trusted-device fields.
+## Testing
 
-- Expand session mode.
-  - Done: `res session start mac` applies the Mac profile, performance mode, caffeine, and performance power profile where available.
-  - Done: `res session stop` restores captured display, speed, caffeine, and balanced power profile where available.
-  - Done: include RustDesk service restart policy and peer-specific Tailscale checks.
+- Add a `bats` test suite (`tests/`) covering core `res.sh` logic: profile loading, `validate_profiles`, `mode_name_for`, `get_warning_summary`, and `session_start`/`session_stop` state file round-trips.
+- Extend the GitHub Actions workflow to run `bats` on every push alongside `shellcheck`.
+- Add a `make test` alias that runs both `shellcheck` and `bats` locally.
 
-## Reliability
+---
 
-- Done: Add `shellcheck` and a GitHub Actions workflow for shell syntax and linting.
-- Done: Add dry-run support to `install.sh system`.
-- Done: Add rollback support for `/etc/X11/xorg.conf` from the latest backup.
-- Done: Add structured profile validation with clear errors for malformed profile lines.
-- Done: Detect stale xrandr modes with matching resolutions but bad refresh rates.
-- Done: Detect whether `~/.config/remote-studio/profiles.conf` overrides built-in profiles.
-- Done: Detect whether Cinnamon loaded the applet from the expected symlink.
+## Auto-update & Distribution
+
+- Add `res update` command: pulls latest from the git origin and re-runs `install.sh install` in one step.
+- Add a version check to `res doctor`: compare `res version` against the latest tag on GitHub (via `curl` + `gh api`) and report if an update is available.
+- Add a GitHub Actions workflow that builds `remote-studio_X.Y_all.deb` and attaches it as a release asset automatically on every version tag push.
+- Publish a `curl | bash` one-liner install script (`install-remote-studio.sh`) that clones the repo and runs `install.sh install`.
+
+---
+
+## Incoming Connection Automation
+
+- Detect when a new RustDesk session connects (poll `ss` for new `ESTAB` on port 21118) and auto-apply `res session start` for the default profile.
+- Detect when the last session disconnects and auto-run `res session stop`.
+- Make auto-session behaviour opt-in via `AUTO_SESSION=true` in `remote-studio.conf`.
+- Add `res watch` command that runs the connection-detection loop in the foreground (useful for testing; background mode via systemd unit).
+
+---
+
+## RustDesk Visibility
+
+- Add `res rustdesk status`: show active codec, FPS, and bitrate by parsing RustDesk logs or `/proc` socket details.
+- Add `res rustdesk log [N]`: tail the RustDesk service log (replaces manual `journalctl -u rustdesk`).
+- Surface codec and FPS in `res status` and the applet tooltip when a session is active.
+
+---
 
 ## Tailscale
 
-- Done: Add `res tailnet peer <name>` to check direct vs DERP path to a specific device.
-- Done: Add `res tailnet doctor` to summarize DNS, UDP, NAT, DERP, and direct-path status.
-- Done: Prefer Tailscale IPs in status output, but show LAN IP as a secondary detail.
-- Done: Generate the exact RustDesk direct address for the current host.
+- Show exit node status in `res tailnet` and `res doctor` (active exit node name or "none").
+- Add a warning to `get_warning_summary` when the machine has been offline from the tailnet for more than N minutes.
+- Add `res tailnet hosts`: list all tailnet peers with their IPs and online/offline status (thin wrapper around `tailscale status`).
 
-## RustDesk
+---
 
-- Done: Add config merge logic for `RustDesk_default.toml` and `RustDesk2.toml`.
-- Done: Add a command to restart RustDesk only after config changes are staged.
-- Done: Detect whether the current connection is direct or relayed when RustDesk exposes enough process/socket detail.
-- Done: Add session presets:
-  - `balanced`: adaptive, auto codec, 60 FPS target.
-  - `quality`: higher image quality for text-heavy static work.
-  - `low-bandwidth`: lower resolution and more compression.
+## Display & Profiles
+
+- Add `res custom <WxH>` shorthand that applies a resolution without requiring a named profile, and prompts to save it to `~/.config/remote-studio/profiles.conf`.
+- Support portrait/landscape rotation toggle (`xrandr --rotate`) as a profile option or standalone `res rotate` command.
+- Add a `res profiles list` command that prints all loaded profiles (built-in and user) with their source file, for debugging override priority.
+- Add an `ipad13` profile for the 13-inch iPad Pro (2064×2752 or landscape 2752×2064).
+
+---
 
 ## Applet
 
-- Done: Show current resolution and Tailnet IP in the panel tooltip.
-- Done: Add one-click `doctor`, `tailnet`, and session start/stop actions.
-- Done: highlight warning count from `res status` in the panel label.
-- Done: avoid writing `/tmp/res_status`; use a user runtime path such as `$XDG_RUNTIME_DIR/remote-studio/status`.
-- Done: Make applet device entries data-driven from `config/profiles.conf`.
+- Show connection quality in the panel label: color the label green for Direct, amber for Relayed, grey for no session.
+- Add a `Copy Direct Address` menu item that writes `IP:21118` to the clipboard.
+- Add configurable notification suppression: a toggle in the applet menu to silence connect/disconnect popups.
+- Replace polling-via-shell-spawn with a GLib file-watch (`Gio.FileMonitor`) on the status file to reduce CPU overhead.
+
+---
+
+## Packaging & Install
+
+- Add a `make deb` GitHub Actions job so the `.deb` is always built on Linux and attached to releases (pairs with the auto-update distribution item above).
+- Add an `install.sh rollback` subcommand that restores the previous symlink state from the backup directory.
+- Write a `INSTALL.md` with a quick-start guide, prerequisites list, and post-install checklist.
+
+---
 
 ## Configuration
 
-- Done: Generate `config/xorg.conf` from profiles during release or install instead of manually editing it.
-- Done: Add a `remote-studio.conf` file for defaults such as preferred profile, RustDesk port, and Mac peer name.
-- Split built-in profiles from user overrides more explicitly:
-  - `config/profiles.conf`
-  - `~/.config/remote-studio/profiles.conf`
-  - `~/.config/remote-studio/local.conf`
+- Add `res config set KEY VALUE` / `res config get KEY` commands to read and write `remote-studio.conf` without manually editing it.
+- Add `res config show` to print the effective config (defaults merged with user overrides).
+- Support a `DEFAULT_SESSION_PROFILE` key in `remote-studio.conf` so `res session start` uses it without an argument.
 
-## Packaging
+---
 
-- Done: Add `make install`, `make doctor`, `make test`, and `make release`.
-- Done: Add a Debian package or Mint-friendly install target.
-- Done: Add version output: `res version`.
-- Done: Add changelog entries for profile/config changes.
+## Documentation & Screenshots
 
-## Documentation
-
-- Add screenshots of the Cinnamon applet and terminal doctor output.
-- Done: Document the 13-inch vs 15-inch MacBook Air profile difference.
-- Done: Document the difference between runtime xrandr switching and persistent Xorg config.
-- Done: Document the GPU rendering limitation and recommended HDMI dummy plug setup.
+- Capture screenshots of the Cinnamon applet (panel label, open menu, tooltip) and commit them to `docs/screenshots/`.
+- Capture `res doctor` terminal output and add it to `docs/screenshots/`.
+- Add a `docs/` directory with a quick-start guide for new machines.
