@@ -179,12 +179,6 @@ get_warning_summary() {
         log_event "Warning: applet-symlink missing or incorrect"
     fi
 
-    local ts_status
-    ts_status=$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || true)
-    if [ "$ts_status" = "NeedsLogin" ] || [ "$ts_status" = "Stopped" ]; then
-        warnings=$((warnings + 1)); messages+=("tailscale-${ts_status,,}")
-    fi
-
     if [ "$warnings" -eq 0 ]; then
         echo "0|OK"
     else
@@ -366,17 +360,8 @@ show_help() {
     done
     echo ""; echo "Actions:"
     echo "  speed, theme, night, caf, privacy, fix, reset, service, audio, keys"
-    echo "  doctor, doctor-fix"
-    echo "  tailnet, tailnet peer <name>, tailnet hosts, tailnet doctor"
-    echo "  rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]"
+    echo "  doctor, doctor-fix, tailnet, tailnet peer <name>, rustdesk [apply|backup|diff]"
     echo "  xorg [PATH], session [start|stop|status]"
-    echo "  custom <W> <H> [scale]   Apply arbitrary resolution (offers save-as-profile)"
-    echo "  rotate [normal|left|right|inverted]"
-    echo "  watch [interval_sec]     Foreground connection watcher"
-    echo "  update                   Pull latest code and re-run install"
-    echo "  profiles                 List all profiles and sources"
-    echo "  config [show|get K|set K V]"
-    echo "  version, help"
 }
 
 generate_xorg() {
@@ -450,17 +435,6 @@ show_doctor() {
     else
         doctor_check "tailscale" "WARN" "no tailnet IP"
     fi
-    git -C "$ROOT_DIR" fetch --quiet 2>/dev/null || true
-    local head upstream
-    head=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)
-    upstream=$(git -C "$ROOT_DIR" rev-parse '@{u}' 2>/dev/null || true)
-    if [ -z "$head" ] || [ -z "$upstream" ]; then
-        doctor_check "update" "INFO" "cannot check (no remote)"
-    elif [ "$head" = "$upstream" ]; then
-        doctor_check "update" "OK" "up to date"
-    else
-        doctor_check "update" "WARN" "update available (res update)"
-    fi
 }
 
 doctor_fix() {
@@ -478,14 +452,6 @@ show_tailnet() {
     [ -z "$ip" ] && { echo "Tailscale IPv4 unavailable."; return 1; }
     echo "Tailscale IP: $ip"
     echo "RustDesk direct: $ip:21118"
-    local exit_status
-    exit_status=$(tailscale exit-node list 2>/dev/null | grep "selected" | awk '{print $1}' || true)
-    [ -n "$exit_status" ] && echo "Exit node: $exit_status" || echo "Exit node: none"
-}
-
-show_tailnet_hosts() {
-    echo "Tailnet peers:"
-    tailscale status --peers=true 2>/dev/null | tail -n +2 | awk '{printf "  %-20s %s\n", $2, $1}'
 }
 
 merge_rustdesk_config() {
@@ -552,23 +518,7 @@ show_rustdesk() {
                 sudo systemctl restart rustdesk
             fi
             ;;
-        status)
-            local log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
-            [ -f "$log_file" ] || log_file="$HOME/.rustdesk/log/rustdesk.log"
-            if [ -f "$log_file" ]; then
-                grep -E "(codec|fps|bitrate|connected|disconnected)" "$log_file" | tail -n 20
-            else
-                echo "RustDesk log not found."
-            fi
-            local users
-            users=$(ss -tnp 2>/dev/null | grep -c -i "rustdesk.*ESTAB" || true)
-            echo "Active sessions: $users"
-            ;;
-        log)
-            local nlines=${2:-50}
-            journalctl -u rustdesk -n "$nlines" --no-pager 2>/dev/null || echo "journalctl unavailable."
-            ;;
-        *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]"; ;;
+        *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>]"; ;;
     esac
 }
 
@@ -591,112 +541,15 @@ show_session() {
     esac
 }
 
-show_update() {
-    if ! git -C "$ROOT_DIR" pull --ff-only; then
-        echo "Error: git pull failed. Ensure this is a git repo with a clean working tree." >&2
-        exit 1
-    fi
-    "$ROOT_DIR/install.sh" install
-    res version
-    log_event "Self-update complete: $VERSION"
-}
-
-show_watch() {
-    local interval=${1:-5}
-    local prev_users=0
-    log_event "Watch: started (interval=${interval}s)"
-    while true; do
-        local users
-        users=$(ss -tnp 2>/dev/null | grep -c -i "rustdesk.*ESTAB" || true)
-        if [ "$users" -gt 0 ] && [ "$prev_users" -eq 0 ]; then
-            log_event "Watch: session connected ($users user(s))"
-            if [ "${AUTO_SESSION:-false}" = "true" ]; then
-                session_start "$DEFAULT_PROFILE"
-            fi
-        elif [ "$users" -eq 0 ] && [ "$prev_users" -gt 0 ]; then
-            log_event "Watch: session disconnected"
-            if [ "${AUTO_SESSION:-false}" = "true" ]; then
-                session_stop
-            fi
-        fi
-        prev_users=$users
-        sleep "$interval"
-    done
-}
-
-show_rotate() {
-    local dir="${1:-normal}"
-    OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
-    [ -z "$OUTPUT" ] && { echo "No connected display."; return 1; }
-    xrandr --output "$OUTPUT" --rotate "$dir"
-    log_event "Rotate: $dir"
-    echo "Rotated $OUTPUT to $dir"
-}
-
-show_profiles_list() {
-    printf "%-12s %-30s %s\n" "KEY" "LABEL" "SOURCE"
-    while IFS='=' read -r key value; do
-        [[ "$key" =~ ^[[:space:]]*# ]] && continue; [[ -z "$key" || -z "$value" ]] && continue
-        IFS='|' read -r label _ _ _ _ _ <<< "$value"
-        printf "%-12s %-30s %s\n" "$(echo "$key" | xargs)" "$(echo "$label" | xargs)" "$DEFAULT_PROFILES"
-    done < "$DEFAULT_PROFILES"
-    if [ -f "$USER_PROFILES" ]; then
-        while IFS='=' read -r key value; do
-            [[ "$key" =~ ^[[:space:]]*# ]] && continue; [[ -z "$key" || -z "$value" ]] && continue
-            IFS='|' read -r label _ _ _ _ _ <<< "$value"
-            printf "%-12s %-30s %s\n" "$(echo "$key" | xargs)" "$(echo "$label" | xargs)" "$USER_PROFILES (override)"
-        done < "$USER_PROFILES"
-    fi
-}
-
-show_config() {
-    case "${1:-show}" in
-        show)
-            echo "# Effective remote-studio config"
-            echo "DEFAULT_PROFILE=${DEFAULT_PROFILE}"
-            echo "DEFAULT_RUSTDESK_PRESET=${DEFAULT_RUSTDESK_PRESET}"
-            echo "AUTO_SESSION=${AUTO_SESSION:-false}"
-            [ -f "$USER_CONFIG" ] && echo "# User config: $USER_CONFIG" || echo "# No user config file"
-            ;;
-        get)
-            [ -z "$2" ] && { echo "Usage: res config get KEY"; return 1; }
-            grep "^${2}=" "$USER_CONFIG" 2>/dev/null | tail -1 | cut -d'=' -f2- || echo "(not set)"
-            ;;
-        set)
-            [ -z "$2" ] || [ -z "$3" ] && { echo "Usage: res config set KEY VALUE"; return 1; }
-            mkdir -p "$(dirname "$USER_CONFIG")"
-            if grep -q "^${2}=" "$USER_CONFIG" 2>/dev/null; then
-                sed -i "s/^${2}=.*/${2}=${3}/" "$USER_CONFIG"
-            else
-                echo "${2}=${3}" >> "$USER_CONFIG"
-            fi
-            echo "Set ${2}=${3} in $USER_CONFIG"
-            log_event "Config set: ${2}=${3}"
-            ;;
-        *) echo "Usage: res config [show|get KEY|set KEY VALUE]"; return 1 ;;
-    esac
+handle_custom() {
+    local w=$1 h=$2 s="${3:-1}"
+    [ -z "$w" ] || [ -z "$h" ] && exit 1
+    apply_all "$w" "$h" "$s" "$s" "$(awk "BEGIN { printf \"%d\", 24 * $s }")" "Custom ${w}x${h}"
 }
 
 if [ -n "$1" ]; then
     case "$1" in
-        custom)
-            [ -z "$2" ] || [ -z "$3" ] && { echo "Usage: res custom <width> <height> [scale]"; exit 1; }
-            local_s="${4:-1}"
-            local_ts=$(awk "BEGIN { printf \"%.1f\", $local_s > 1.0 ? 1.5 : 1.0 }")
-            local_cursor=$(awk "BEGIN { printf \"%d\", 24 * $local_s }")
-            if apply_all "$2" "$3" "$local_s" "$local_ts" "$local_cursor" "Custom ${2}x${3}"; then
-                if [ -t 0 ]; then
-                    read -r -p "Save as profile? [y/N] " ans
-                    if [[ "$ans" =~ ^[Yy]$ ]]; then
-                        read -r -p "Profile key (e.g. 'work'): " pkey
-                        mkdir -p "$(dirname "$USER_PROFILES")"
-                        echo "${pkey}=Custom ${2}x${3}|${2}|${3}|${local_s}|${local_ts}|${local_cursor}" >> "$USER_PROFILES"
-                        echo "Saved to $USER_PROFILES"
-                        log_event "Profile saved: $pkey ${2}x${3}"
-                    fi
-                fi
-            fi
-            ;;
+        custom) handle_custom "$2" "$3" "$4" ;;
         status) show_status ;;
         info) show_info ;;
         log) show_log "$2" ;;
@@ -707,8 +560,6 @@ if [ -n "$1" ]; then
                 show_tailnet_peer "$3"
             elif [ "$2" = "doctor" ]; then
                 show_tailnet_doctor
-            elif [ "$2" = "hosts" ]; then
-                show_tailnet_hosts
             else
                 show_tailnet
             fi
@@ -716,11 +567,6 @@ if [ -n "$1" ]; then
         rustdesk) show_rustdesk "$2" "$3" ;;
         xorg) if [ "$2" = "rollback" ]; then rollback_xorg; else generate_xorg "$2"; fi ;;
         session) show_session "$2" "$3" ;;
-        update) show_update ;;
-        watch) show_watch "${2:-5}" ;;
-        rotate) show_rotate "${2:-normal}" ;;
-        profiles) show_profiles_list ;;
-        config) show_config "$2" "$3" "$4" ;;
         version) echo "$VERSION" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
@@ -769,22 +615,10 @@ tui_custom_resolution() {
 }
 
 tui_performance() {
-    local choice current_rotation
+    local choice
     while true; do
-        get_toggle_states
-        current_rotation=$(xrandr | grep " connected" | grep -o "normal\|left\|right\|inverted" | head -1 || echo "normal")
-        choice=$(whiptail --title "Performance" --menu "Adjust Session" 22 82 12 "speed" "Toggle Speed Mode ($S_ST)" "caf" "Toggle Caffeine ($C_ST)" "theme" "Toggle Theme ($T_ST)" "night" "Toggle Night Shift ($N_ST)" "fix" "Fix Common Issues" "session-start" "Start Mac Session" "session-stop" "Stop Session" "rotate" "Rotate Display (${current_rotation})" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
-        case "$choice" in
-            back) return 0 ;;
-            session-start) session_start mac ;;
-            session-stop) session_stop ;;
-            rotate)
-                local rot_choice
-                rot_choice=$(whiptail --title "Rotate" --menu "Select orientation" 14 50 4 "normal" "Normal" "left" "Left" "right" "Right" "inverted" "Inverted" 3>&1 1>&2 2>&3) || continue
-                show_rotate "$rot_choice"
-                ;;
-            *) do_action "$choice" ;;
-        esac
+        get_toggle_states; choice=$(whiptail --title "Performance" --menu "Adjust Session" 20 82 10 "speed" "Toggle Speed Mode ($S_ST)" "caf" "Toggle Caffeine ($C_ST)" "theme" "Toggle Theme ($T_ST)" "night" "Toggle Night Shift ($N_ST)" "fix" "Fix Common Issues" "session-start" "Start Mac Session" "session-stop" "Stop Session" "back" "Main Menu" 3>&1 1>&2 2>&3) || return 0
+        case "$choice" in back) return 0 ;; session-start) session_start mac ;; session-stop) session_stop ;; *) do_action "$choice" ;; esac
     done
 }
 
@@ -807,7 +641,7 @@ tui_diagnostics() {
 tui_rustdesk() {
     local choice
     while true; do
-        choice=$(whiptail --title "RustDesk" --menu "Config & Service" 22 86 14 "backup" "Backup Config" "diff" "Diff vs Template" "apply-quality" "Apply Quality Preset" "apply-balanced" "Apply Balanced Preset" "apply-speed" "Apply Speed Preset" "service" "Restart Service" "status" "Session Status" "log" "Service Log (50 lines)" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
+        choice=$(whiptail --title "RustDesk" --menu "Config & Service" 20 86 12 "backup" "Backup Config" "diff" "Diff vs Template" "apply-quality" "Apply Quality Preset" "apply-balanced" "Apply Balanced Preset" "apply-speed" "Apply Speed Preset" "service" "Restart Service" "back" "System Menu" 3>&1 1>&2 2>&3) || return 0
         case "$choice" in
             back) return 0 ;;
             apply-*)

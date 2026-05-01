@@ -1,0 +1,12 @@
+[Unit]
+Description=Remote Studio connection watcher
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/res watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

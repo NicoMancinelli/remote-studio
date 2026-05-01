@@ -1,4 +1,4 @@
-.PHONY: install doctor test release deb
+.PHONY: install doctor test release deb rollback
 
 install:
 	./install.sh install
@@ -8,6 +8,7 @@ doctor:
 
 test:
 	shellcheck *.sh
+	@command -v bats >/dev/null 2>&1 && bats tests/ || echo "bats not installed — skipping unit tests"
 
 release:
 	./res.sh xorg config/xorg.conf

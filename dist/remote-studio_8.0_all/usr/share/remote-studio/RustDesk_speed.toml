@@ -1,0 +1,8 @@
+[options]
+i444 = 'N'
+image_quality = 'low'
+codec-preference = 'auto'
+view_style = 'adaptive'
+enable-abr = 'Y'
+enable-hwcodec = 'Y'
+custom-fps = '30'

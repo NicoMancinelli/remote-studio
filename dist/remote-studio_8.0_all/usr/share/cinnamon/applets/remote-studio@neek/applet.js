@@ -2,7 +2,6 @@ const Applet = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
 const Util = imports.misc.util;
 const GLib = imports.gi.GLib;
-const Gio = imports.gi.Gio;
 const Mainloop = imports.mainloop;
 const St = imports.gi.St;
 
@@ -45,47 +44,28 @@ MyApplet.prototype = {
 
         this.lastUserCount = 0;
         this._timeout = null;
-        this._fileMonitor = null;
-        this._notifyEnabled = true;
+        this._readTimeout = null;
         this._scheduleUpdate();
-        this._setupFileWatch();
         this._buildMenu();
     },
 
     _scheduleUpdate: function() {
         if (this._timeout) Mainloop.source_remove(this._timeout);
+        if (this._readTimeout) Mainloop.source_remove(this._readTimeout);
 
         GLib.spawn_command_line_async("/bin/bash -c \"mkdir -p " + STATUS_DIR + " && " + RES_CMD + " status > " + STATUS_FILE + "\"");
+
+        this._readTimeout = Mainloop.timeout_add(600, () => {
+            this._readStatus();
+            this._readTimeout = null;
+            return false;
+        });
 
         this._timeout = Mainloop.timeout_add_seconds(10, () => {
             this._timeout = null;
             this._scheduleUpdate();
             return false;
         });
-    },
-
-    _setupFileWatch: function() {
-        try {
-            let statusFile = Gio.File.new_for_path(STATUS_FILE);
-            // Ensure the directory exists
-            let statusDir = Gio.File.new_for_path(STATUS_DIR);
-            if (!statusDir.query_exists(null)) {
-                statusDir.make_directory_with_parents(null);
-            }
-            // Create an empty status file if it doesn't exist so we can watch it
-            if (!statusFile.query_exists(null)) {
-                statusFile.replace_contents("", null, false, Gio.FileCreateFlags.NONE, null);
-            }
-            this._fileMonitor = statusFile.monitor_file(Gio.FileMonitorFlags.NONE, null);
-            this._fileMonitor.connect('changed', (monitor, file, other, eventType) => {
-                if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
-                    eventType === Gio.FileMonitorEvent.MODIFIED) {
-                    this._readStatus();
-                }
-            });
-        } catch(e) {
-            // Fall back to polling if file monitoring fails
-        }
     },
 
     _getCurrentMode: function() {
@@ -111,17 +91,6 @@ MyApplet.prototype = {
         this.set_applet_icon_name(icon);
     },
 
-    _getDirectAddress: function() {
-        try {
-            let [res, contents] = GLib.file_get_contents(STATUS_FILE);
-            if (res) {
-                let parts = contents.toString().trim().split(" | ");
-                return (parts[11] || "").trim() || null;
-            }
-        } catch(e) {}
-        return null;
-    },
-
     _readStatus: function() {
         try {
             let [res, contents] = GLib.file_get_contents(STATUS_FILE);
@@ -134,26 +103,18 @@ MyApplet.prototype = {
             let userCount = parseInt(info[3]) || 0;
             let user_icon = (userCount > 0) ? " \u{1F465}" + userCount : "";
             let warningCount = parseInt(info[5]) || 0;
-            let alerts = (warningCount > 0) ? "⚠ " : "";
-            let connType = (info[9] || "").trim();
+            let alerts = (warningCount > 0) ? "\u26A0 " : "";
 
-            if (this._notifyEnabled) {
-                if (userCount > this.lastUserCount) {
-                    let diff = userCount - this.lastUserCount;
-                    Util.spawnCommandLine("notify-send -u critical 'Remote Studio' '" + diff + " user(s) connected'");
-                } else if (userCount < this.lastUserCount && this.lastUserCount > 0) {
-                    Util.spawnCommandLine("notify-send -u normal 'Remote Studio' 'User disconnected (" + userCount + " remaining)'");
-                }
+            if (userCount > this.lastUserCount) {
+                let diff = userCount - this.lastUserCount;
+                Util.spawnCommandLine("notify-send -u critical 'Remote Studio' '" + diff + " user(s) connected'");
+            } else if (userCount < this.lastUserCount && this.lastUserCount > 0) {
+                Util.spawnCommandLine("notify-send -u normal 'Remote Studio' 'User disconnected (" + userCount + " remaining)'");
             }
             this.lastUserCount = userCount;
 
-            let qualityDot = "";
-            if (userCount > 0) {
-                qualityDot = (connType === "Direct") ? "● " : "◐ ";
-            }
-
             this._updateIcon(label);
-            this.set_applet_label(alerts + qualityDot + label + user_icon);
+            this.set_applet_label(alerts + label + user_icon);
             this.set_applet_tooltip(
                 "Remote Studio" +
                 "\nMode: " + label +
@@ -240,30 +201,6 @@ MyApplet.prototype = {
         this._addTerminalItem("Tailnet Doctor", "network-wired-symbolic", "tailnet doctor");
         this._addMenuItem("Standard Reset (1024x768)", "view-refresh-symbolic", "reset");
 
-        // Copy Direct Address
-        let directAddr = this._getDirectAddress();
-        if (directAddr) {
-            let copyItem = new PopupMenu.PopupIconMenuItem(
-                "Copy Direct Address (" + directAddr + ")",
-                "edit-copy-symbolic",
-                St.IconType.SYMBOLIC
-            );
-            copyItem.connect('activate', () => {
-                Util.spawnCommandLine("bash -c \"echo -n '" + directAddr + "' | xclip -selection clipboard\"");
-            });
-            this.menu.addMenuItem(copyItem);
-        }
-
-        // Notification suppression toggle
-        let notifyLabel = this._notifyEnabled ? "Mute Connect/Disconnect Alerts" : "Unmute Connect/Disconnect Alerts";
-        let notifyIcon = this._notifyEnabled ? "notifications-disabled-symbolic" : "notification-symbolic";
-        let notifyItem = new PopupMenu.PopupIconMenuItem(notifyLabel, notifyIcon, St.IconType.SYMBOLIC);
-        notifyItem.connect('activate', () => {
-            this._notifyEnabled = !this._notifyEnabled;
-            this._buildMenu();
-        });
-        this.menu.addMenuItem(notifyItem);
-
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         let studioItem = new PopupMenu.PopupIconMenuItem("Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC);
@@ -300,7 +237,7 @@ MyApplet.prototype = {
 
     on_applet_removed_from_panel: function() {
         if (this._timeout) Mainloop.source_remove(this._timeout);
-        if (this._fileMonitor) this._fileMonitor.cancel();
+        if (this._readTimeout) Mainloop.source_remove(this._readTimeout);
     }
 };
 

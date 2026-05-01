@@ -35,6 +35,7 @@ Usage:
   ./install.sh doctor       Run res doctor
   ./install.sh uninstall    Remove user-level links
   ./install.sh backup       Backup current user/system config files
+  ./install.sh rollback     Restore config files from the latest backup
 EOF
 }
 
@@ -52,6 +53,19 @@ backup_configs() {
     fi
 
     echo "Backup written to $backup_dir"
+}
+
+rollback_configs() {
+    local backup_root="$HOME/.config/remote-studio/backups"
+    [ -d "$backup_root" ] || { echo "Error: No backup directory at $backup_root"; exit 1; }
+    local latest
+    latest=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d | sort -r | head -n 1)
+    [ -z "$latest" ] && { echo "Error: No backups found in $backup_root"; exit 1; }
+    echo "Rolling back from: $latest"
+    [ -f "$latest/xsessionrc" ] && run cp -P "$latest/xsessionrc" "$HOME/.xsessionrc" && echo "  Restored .xsessionrc"
+    [ -f "$latest/RustDesk_default.toml" ] && run cp "$latest/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml" && echo "  Restored RustDesk_default.toml"
+    [ -f "$latest/xorg.conf" ] && run sudo cp "$latest/xorg.conf" /etc/X11/xorg.conf && echo "  Restored /etc/X11/xorg.conf"
+    echo "Rollback complete. Restart LightDM or reboot if xorg.conf was changed."
 }
 
 install_user() {
@@ -101,6 +115,7 @@ case "${1:-install}" in
     --system|system) install_system ;;
     doctor) "$ROOT_DIR/res.sh" doctor ;;
     backup) backup_configs ;;
+    rollback) rollback_configs ;;
     uninstall) uninstall_user ;;
     help|-h|--help) usage ;;
     *)
