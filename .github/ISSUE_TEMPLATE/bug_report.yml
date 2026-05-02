@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a bug in Remote Studio
+labels: [bug]
+body:
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `res doctor`
+      description: Paste the full output. Run `res doctor 2>&1`.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Remote Studio version
+      description: Output of `res version`
+      placeholder: "8.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / Cinnamon version
+      description: "Output of `lsb_release -ds && cinnamon --version`"
+      placeholder: "Linux Mint 21.3 / Cinnamon 5.8.4"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What command or TUI action triggered the bug?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant log lines
+      description: From `~/.remote_studio.log` — `tail -n 50 ~/.remote_studio.log`
+      render: shell

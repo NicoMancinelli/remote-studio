@@ -1,0 +1,52 @@
+name: Integration test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  install-and-test:
+    name: Install on Ubuntu and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bash whiptail x11-xserver-utils mesa-utils dpkg
+
+      - name: Build .deb
+        run: bash package/build-deb.sh
+
+      - name: Install .deb
+        run: sudo dpkg -i dist/remote-studio_*_all.deb || sudo apt-get install -fy
+
+      - name: Verify res command on PATH
+        run: command -v res
+
+      - name: Run res version
+        run: res version
+
+      - name: Run res help
+        run: res help
+
+      - name: Run res doctor (smoke test — expected to show some warnings)
+        run: |
+          res doctor || echo "doctor reported issues (expected on a CI runner)"
+
+      - name: Run res self-test
+        run: res self-test || echo "self-test reported issues (CI environment lacks display)"
+
+      - name: Run res config show
+        run: res config show
+
+      - name: Verify systemd unit syntax
+        run: |
+          sudo systemd-analyze verify /usr/lib/systemd/user/remote-studio-watch.service || true
+
+      - name: Verify logrotate config syntax
+        run: sudo logrotate -d /etc/logrotate.d/remote-studio

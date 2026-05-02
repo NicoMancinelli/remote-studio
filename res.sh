@@ -1,5 +1,8 @@
 #!/bin/bash
 
+set -uo pipefail
+IFS=$'\n\t'
+
 # ==============================================================================
 # RUSTDESK REMOTE STUDIO V8.0
 # ==============================================================================
@@ -89,7 +92,16 @@ load_profiles_file "$USER_PROFILES"
 # CORE ENGINE
 # ------------------------------------------------------------------------------
 
-log_event() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"; }
+log_event() {
+    if [ -f "$LOG_FILE" ]; then
+        local size
+        size=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+        if [ "$size" -gt 1048576 ]; then
+            mv "$LOG_FILE" "${LOG_FILE}.1"
+        fi
+    fi
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
 
 mode_name_for() {
     echo "remote-studio-${1}x${2}-60"
@@ -369,7 +381,7 @@ show_help() {
     done
     echo ""; echo "Actions:"
     echo "  speed, theme, night, caf, privacy, fix, reset, service, audio, keys"
-    echo "  doctor, doctor-fix"
+    echo "  doctor, doctor-fix, self-test, init"
     echo "  tailnet, tailnet peer <name>, tailnet hosts, tailnet doctor"
     echo "  rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]"
     echo "  xorg [PATH], session [start|stop|status]"
@@ -441,17 +453,25 @@ show_doctor() {
     else
         doctor_check "renderer" "OK" "$r"
     fi
-    rs=$(systemctl is-active rustdesk 2>/dev/null)
-    if [ "$rs" = "active" ]; then
-        doctor_check "rustdesk" "OK" "active"
+    if ! command -v rustdesk >/dev/null 2>&1 && ! systemctl list-unit-files rustdesk.service >/dev/null 2>&1; then
+        doctor_check "rustdesk" "MISS" "not installed (download from rustdesk.com)"
     else
-        doctor_check "rustdesk" "WARN" "$rs"
+        rs=$(systemctl is-active rustdesk 2>/dev/null || echo "inactive")
+        if [ "$rs" = "active" ]; then
+            doctor_check "rustdesk" "OK" "active"
+        else
+            doctor_check "rustdesk" "WARN" "$rs"
+        fi
     fi
-    tip=$(get_tailnet_ip)
-    if [ -n "$tip" ]; then
-        doctor_check "tailscale" "OK" "$tip"
+    if ! command -v tailscale >/dev/null 2>&1; then
+        doctor_check "tailscale" "MISS" "not installed (curl -fsSL https://tailscale.com/install.sh | sh)"
     else
-        doctor_check "tailscale" "WARN" "no tailnet IP"
+        tip=$(get_tailnet_ip)
+        if [ -n "$tip" ]; then
+            doctor_check "tailscale" "OK" "$tip"
+        else
+            doctor_check "tailscale" "WARN" "no tailnet IP (tailscale up?)"
+        fi
     fi
     git -C "$ROOT_DIR" fetch --quiet 2>/dev/null || true
     local head upstream
@@ -464,6 +484,76 @@ show_doctor() {
     else
         doctor_check "update" "WARN" "update available (res update)"
     fi
+
+    # Log file size
+    if [ -f "$LOG_FILE" ]; then
+        local lsize
+        lsize=$(stat -c%s "$LOG_FILE" 2>/dev/null || stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+        if [ "$lsize" -gt 524288 ]; then
+            doctor_check "log-size" "WARN" "$((lsize / 1024)) KB (rotates at 1024 KB)"
+        else
+            doctor_check "log-size" "OK" "$((lsize / 1024)) KB"
+        fi
+    else
+        doctor_check "log-size" "INFO" "no log yet"
+    fi
+
+    # Backup directory size (cap at 10 entries enforced by install.sh)
+    local backup_root="$HOME/.config/remote-studio/backups"
+    if [ -d "$backup_root" ]; then
+        local bcount
+        bcount=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+        if [ "$bcount" -gt 10 ]; then
+            doctor_check "backups" "WARN" "$bcount entries (recommended: <= 10)"
+        else
+            doctor_check "backups" "OK" "$bcount entries"
+        fi
+    fi
+
+    # Stale state file: STATE_FILE references a profile that no longer exists
+    if [ -f "$STATE_FILE" ]; then
+        local state_label
+        state_label=$(awk -F"'" '{print $2}' "$STATE_FILE" 2>/dev/null)
+        if [ -n "$state_label" ]; then
+            local found=0 k plabel
+            for k in "${!PROFILES[@]}"; do
+                IFS='|' read -r plabel _ _ _ _ _ <<< "${PROFILES[$k]}"
+                [ "$plabel" = "$state_label" ] && found=1 && break
+            done
+            if [ "$found" -eq 0 ] && [[ "$state_label" != Custom* ]]; then
+                doctor_check "state" "WARN" "active mode '$state_label' no longer in profiles"
+            else
+                doctor_check "state" "OK" "$state_label"
+            fi
+        fi
+    fi
+
+    # /usr/local/bin/res symlink validity
+    if [ -L /usr/local/bin/res ]; then
+        local target
+        target=$(readlink -f /usr/local/bin/res 2>/dev/null)
+        if [ "$target" = "$ROOT_DIR/res.sh" ]; then
+            doctor_check "symlink" "OK" "/usr/local/bin/res -> $ROOT_DIR/res.sh"
+        else
+            doctor_check "symlink" "WARN" "/usr/local/bin/res -> $target (expected $ROOT_DIR/res.sh)"
+        fi
+    elif [ -e /usr/local/bin/res ]; then
+        doctor_check "symlink" "WARN" "/usr/local/bin/res exists but is not a symlink"
+    else
+        doctor_check "symlink" "INFO" "/usr/local/bin/res not installed"
+    fi
+
+    # Cinnamon applet loaded
+    if pgrep -x cinnamon >/dev/null 2>&1; then
+        local applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+        if [ -L "$applet_dir/applet.js" ] || [ -f "$applet_dir/applet.js" ]; then
+            doctor_check "applet" "OK" "files present at $applet_dir"
+        else
+            doctor_check "applet" "WARN" "files missing at $applet_dir"
+        fi
+    else
+        doctor_check "applet" "INFO" "cinnamon not running"
+    fi
 }
 
 doctor_fix() {
@@ -473,6 +563,88 @@ doctor_fix() {
     mkdir -p "$applet_target"; for f in applet.js metadata.json; do [ "$(readlink -f "$applet_target/$f")" != "$ROOT_DIR/applet/$f" ] && ln -sf "$ROOT_DIR/applet/$f" "$applet_target/$f"; done
     [ ! -f "$HOME/.config/rustdesk/RustDesk_default.toml" ] && { mkdir -p "$HOME/.config/rustdesk"; cp "$ROOT_DIR/config/RustDesk_default.toml" "$HOME/.config/rustdesk/RustDesk_default.toml"; }
     echo "Done."
+}
+
+show_self_test() {
+    local pass=0 fail=0
+    echo "Remote Studio self-test"
+    echo
+
+    _t() {
+        local name=$1; shift
+        if "$@" >/dev/null 2>&1; then
+            printf "  [PASS] %s\n" "$name"; pass=$((pass + 1))
+        else
+            printf "  [FAIL] %s\n" "$name"; fail=$((fail + 1))
+        fi
+    }
+
+    _t "res command on PATH"        command -v res
+    _t "ROOT_DIR exists"            test -d "$ROOT_DIR"
+    _t "profiles file readable"     test -r "$DEFAULT_PROFILES"
+    _t "PROFILES populated"         test "${#PROFILES[@]}" -gt 0
+    _t "log_event writes log"       bash -c "log_event 'self-test ping' && grep -q 'self-test ping' '$LOG_FILE'"
+    _t "status output writable"     bash -c "$ROOT_DIR/res.sh status > /dev/null"
+    _t "version reports"            bash -c "$ROOT_DIR/res.sh version | grep -q ."
+    _t "doctor exits 0"             bash -c "$ROOT_DIR/res.sh doctor > /dev/null"
+    _t "config show exits 0"        bash -c "$ROOT_DIR/res.sh config show > /dev/null"
+
+    echo
+    echo "Result: $pass passed, $fail failed"
+    [ "$fail" -eq 0 ] && return 0 || return 1
+}
+
+show_init_wizard() {
+    if ! command -v whiptail >/dev/null 2>&1; then
+        echo "Init wizard requires whiptail - falling back to res doctor."
+        show_doctor
+        return 0
+    fi
+
+    whiptail --title "Welcome to Remote Studio v${VERSION}" --msgbox \
+        "This wizard will check your setup and guide you through initial configuration.\n\nWe'll verify:\n  1. Required commands\n  2. Tailscale status\n  3. RustDesk service\n  4. Display profile selection\n  5. Cinnamon applet" 16 70
+
+    # Step 1: dependency check
+    local missing=()
+    for cmd in xrandr whiptail gsettings; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        whiptail --msgbox "Missing required commands:\n  ${missing[*]}\n\nInstall them via apt and run 'res init' again." 12 60
+        return 1
+    fi
+
+    # Step 2: tailscale
+    if ! command -v tailscale >/dev/null 2>&1; then
+        whiptail --yesno "Tailscale is not installed.\n\nInstall it now? (runs the official installer)" 10 60 && \
+            sh -c "curl -fsSL https://tailscale.com/install.sh | sh"
+    fi
+
+    # Step 3: rustdesk
+    if ! command -v rustdesk >/dev/null 2>&1 && ! systemctl list-unit-files rustdesk.service >/dev/null 2>&1; then
+        whiptail --msgbox "RustDesk is not installed.\n\nDownload it from https://rustdesk.com and re-run 'res init'." 10 65
+    fi
+
+    # Step 4: default profile selection
+    local p_entries=() picked key label
+    for key in $(sorted_profile_keys); do
+        IFS='|' read -r label _ _ _ _ _ <<< "${PROFILES[$key]}"
+        p_entries+=("$key" "$label")
+    done
+    picked=$(whiptail --title "Default Profile" --menu \
+        "Select the device you'll connect from most often:" \
+        20 60 10 "${p_entries[@]}" 3>&1 1>&2 2>&3) || picked="mac"
+    show_config set DEFAULT_PROFILE "$picked"
+
+    # Step 5: applet check
+    local applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
+    if [ -L "$applet_dir/applet.js" ] || [ -f "$applet_dir/applet.js" ]; then
+        whiptail --msgbox "Setup complete!\n\nDefault profile: $picked\nApplet: installed\n\nRight-click your Cinnamon panel and add 'Remote Studio' to enable it." 12 65
+    else
+        if whiptail --yesno "Setup complete except for the Cinnamon applet.\n\nRun ./install.sh install now?" 10 65; then
+            "$ROOT_DIR/install.sh" install
+        fi
+    fi
 }
 
 show_tailnet() {
@@ -608,6 +780,7 @@ show_watch() {
     local interval=${1:-5}
     local prev_users=0
     log_event "Watch: started (interval=${interval}s)"
+    trap 'log_event "Watch: stopped (signal)"; exit 0' SIGTERM SIGINT
     while true; do
         local users
         users=$(ss -tnp 2>/dev/null | grep -c -i "rustdesk.*ESTAB" || true)
@@ -662,11 +835,11 @@ show_config() {
             [ -f "$USER_CONFIG" ] && echo "# User config: $USER_CONFIG" || echo "# No user config file"
             ;;
         get)
-            [ -z "$2" ] && { echo "Usage: res config get KEY"; return 1; }
+            [ -z "${2:-}" ] && { echo "Usage: res config get KEY"; return 1; }
             grep "^${2}=" "$USER_CONFIG" 2>/dev/null | tail -1 | cut -d'=' -f2- || echo "(not set)"
             ;;
         set)
-            [ -z "$2" ] || [ -z "$3" ] && { echo "Usage: res config set KEY VALUE"; return 1; }
+            { [ -z "${2:-}" ] || [ -z "${3:-}" ]; } && { echo "Usage: res config set KEY VALUE"; return 1; }
             mkdir -p "$(dirname "$USER_CONFIG")"
             if grep -q "^${2}=" "$USER_CONFIG" 2>/dev/null; then
                 sed -i "s/^${2}=.*/${2}=${3}/" "$USER_CONFIG"
@@ -680,10 +853,10 @@ show_config() {
     esac
 }
 
-if [ -n "$1" ]; then
+if [ -n "${1:-}" ]; then
     case "$1" in
         custom)
-            [ -z "$2" ] || [ -z "$3" ] && { echo "Usage: res custom <width> <height> [scale]"; exit 1; }
+            { [ -z "${2:-}" ] || [ -z "${3:-}" ]; } && { echo "Usage: res custom <width> <height> [scale]"; exit 1; }
             local_s="${4:-1}"
             local_ts=$(awk "BEGIN { printf \"%.1f\", $local_s > 1.0 ? 1.5 : 1.0 }")
             local_cursor=$(awk "BEGIN { printf \"%d\", 24 * $local_s }")
@@ -702,33 +875,35 @@ if [ -n "$1" ]; then
             ;;
         status) show_status ;;
         info) show_info ;;
-        log) show_log "$2" ;;
+        log) show_log "${2:-20}" ;;
         doctor) show_doctor ;;
         doctor-fix) doctor_fix ;;
+        self-test) show_self_test ;;
+        init) show_init_wizard ;;
         tailnet)
-            if [ "$2" = "peer" ]; then
-                show_tailnet_peer "$3"
-            elif [ "$2" = "doctor" ]; then
+            if [ "${2:-}" = "peer" ]; then
+                show_tailnet_peer "${3:-}"
+            elif [ "${2:-}" = "doctor" ]; then
                 show_tailnet_doctor
-            elif [ "$2" = "hosts" ]; then
+            elif [ "${2:-}" = "hosts" ]; then
                 show_tailnet_hosts
             else
                 show_tailnet
             fi
             ;;
-        rustdesk) show_rustdesk "$2" "$3" ;;
-        xorg) if [ "$2" = "rollback" ]; then rollback_xorg; else generate_xorg "$2"; fi ;;
-        session) show_session "$2" "$3" ;;
+        rustdesk) show_rustdesk "${2:-}" "${3:-}" ;;
+        xorg) if [ "${2:-}" = "rollback" ]; then rollback_xorg; else generate_xorg "${2:-}"; fi ;;
+        session) show_session "${2:-}" "${3:-}" ;;
         update) show_update ;;
         watch) show_watch "${2:-5}" ;;
         rotate) show_rotate "${2:-normal}" ;;
         profiles) show_profiles_list ;;
-        config) show_config "$2" "$3" "$4" ;;
+        config) show_config "${2:-}" "${3:-}" "${4:-}" ;;
         version) echo "$VERSION" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
         *)
-            if [ -n "${PROFILES[$1]}" ]; then
+            if [ -n "${PROFILES[$1]:-}" ]; then
                 apply_profile "$1" && record_recent_profile "$1"
             else
                 echo "Unknown command: $1"; exit 1
@@ -1344,6 +1519,12 @@ show_text_menu() {
         esac
     done
 }
+
+# Graceful fallback: text menu if whiptail is not installed
+if ! command -v whiptail >/dev/null 2>&1; then
+    echo "Note: whiptail not installed - using text menu (apt install whiptail for the full TUI)"
+    show_text_menu
+fi
 
 [ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] && show_text_menu
 while true; do

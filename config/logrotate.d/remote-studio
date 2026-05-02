@@ -1,0 +1,14 @@
+# Logrotate config for Remote Studio
+# Install to: /etc/logrotate.d/remote-studio
+# Note: res.sh also rotates internally at 1MB; this is a system-level safety net.
+
+/home/*/.remote_studio.log {
+    weekly
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}

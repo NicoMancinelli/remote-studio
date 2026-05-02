@@ -1,12 +1,33 @@
 [Unit]
 Description=Remote Studio connection watcher
-After=graphical-session.target
+Documentation=https://github.com/NicoMancinelli/remote-studio
+After=graphical-session.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/res watch
 Restart=on-failure
 RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.remote_studio.log %h/.remote_studio.log.1 %h/.config/remote-studio %h/.res_state %h/.wallpaper_backup %t/remote-studio
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
 
 [Install]
 WantedBy=graphical-session.target

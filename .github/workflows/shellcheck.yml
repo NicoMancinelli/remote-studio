@@ -35,3 +35,15 @@ jobs:
       - name: Run tests
         run: bats tests/
         if: hashFiles('tests/') != ''
+
+  syntax:
+    name: Bash syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all .sh files parse
+        run: |
+          for f in $(find . -name '*.sh' -not -path './dist/*'); do
+            echo "Checking $f"
+            bash -n "$f"
+          done

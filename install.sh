@@ -53,6 +53,20 @@ backup_configs() {
     fi
 
     echo "Backup written to $backup_dir"
+    prune_backups
+}
+
+prune_backups() {
+    local backup_root="$HOME/.config/remote-studio/backups"
+    [ -d "$backup_root" ] || return 0
+    # Keep the 10 most recent backups, delete the rest
+    local count=0
+    find "$backup_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | while read -r dir; do
+        count=$((count + 1))
+        if [ "$count" -gt 10 ]; then
+            run rm -rf "$dir"
+        fi
+    done
 }
 
 rollback_configs() {
