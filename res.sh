@@ -127,7 +127,7 @@ if [ -n "${1:-}" ]; then
             fi
             ;;
     esac
-    exit 0
+    exit
 fi
 
 # ---- TUI main loop ----

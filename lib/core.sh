@@ -193,7 +193,7 @@ load_profiles_file() {
         [[ "$key" =~ ^[[:space:]]*# ]] && continue
         [[ -z "$key" || -z "$value" ]] && continue
         key=$(echo "$key" | xargs)
-        PROFILES[key]="$value"
+        PROFILES["$key"]="$value"
     done < "$file"
 }
 
