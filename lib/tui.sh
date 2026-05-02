@@ -31,32 +31,34 @@ run_panel_command() {
 confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 
 tui_quick() {
-    local choice
+    local choice def_label
+    def_label="${PROFILES[${DEFAULT_PROFILE}]%%|*}"
+    [ -z "$def_label" ] && def_label="$DEFAULT_PROFILE"
     while true; do
         choice=$(whiptail --title "Quick Actions" \
-            --menu "Common workflows:" \
-            22 80 10 \
-            "mac-quality"     "Start Mac session + apply Quality preset" \
-            "mac-balanced"    "Start Mac session + apply Balanced preset" \
-            "mac-speed"       "Start Mac session + apply Speed preset" \
-            "ipad-balanced"   "Start iPad session + apply Balanced preset" \
-            "stop-reset"      "Stop session + reset display" \
-            "fix-and-restart" "Fix clipboard/audio/keys + restart RustDesk" \
-            "back"            "Main Menu" \
+            --menu "Common workflows (default: ${def_label}):" \
+            22 84 10 \
+            "default-quality"  "Start ${def_label} session + apply Quality preset" \
+            "default-balanced" "Start ${def_label} session + apply Balanced preset" \
+            "default-speed"    "Start ${def_label} session + apply Speed preset" \
+            "ipad-balanced"    "Start iPad session + apply Balanced preset" \
+            "stop-reset"       "Stop session + reset display" \
+            "fix-and-restart"  "Fix clipboard/audio/keys + restart RustDesk" \
+            "back"             "Main Menu" \
             3>&1 1>&2 2>&3) || return 0
         case "$choice" in
             back) return 0 ;;
-            mac-quality)
-                session_start mac && show_rustdesk apply quality
-                whiptail --msgbox "Mac session started with Quality preset." 7 60
+            default-quality)
+                session_start "$DEFAULT_PROFILE" && show_rustdesk apply quality
+                whiptail --msgbox "${def_label} session started with Quality preset." 7 62
                 ;;
-            mac-balanced)
-                session_start mac && show_rustdesk apply balanced
-                whiptail --msgbox "Mac session started with Balanced preset." 7 60
+            default-balanced)
+                session_start "$DEFAULT_PROFILE" && show_rustdesk apply balanced
+                whiptail --msgbox "${def_label} session started with Balanced preset." 7 64
                 ;;
-            mac-speed)
-                session_start mac && show_rustdesk apply speed
-                whiptail --msgbox "Mac session started with Speed preset." 7 60
+            default-speed)
+                session_start "$DEFAULT_PROFILE" && show_rustdesk apply speed
+                whiptail --msgbox "${def_label} session started with Speed preset." 7 62
                 ;;
             ipad-balanced)
                 session_start ipad && show_rustdesk apply balanced
@@ -115,13 +117,16 @@ SERVICES
 
 RECENT EVENTS
 ${recent_log}"
-        if ! whiptail --title "Dashboard — Remote Studio v${VERSION}" \
+        local _exit
+        timeout 15 whiptail --title "Dashboard — auto-refresh in 15s (Remote Studio v${VERSION})" \
             --yes-button "Refresh" --no-button "Close" \
-            --yesno "$body" "$lines" "$cols"; then
-            return 0
+            --yesno "$body" "$lines" "$cols"
+        _exit=$?
+        if [ "$_exit" -eq 1 ]; then
+            return 0  # Close clicked
         fi
-        # "Refresh" selected — loop and redraw
-        _WARN_CACHE=""  # invalidate cache so next render is fresh
+        # 0 = Refresh clicked, 124 = 15s timeout — both redraw
+        _WARN_CACHE=""
     done
 }
 
@@ -165,49 +170,54 @@ tui_log_viewer() {
 }
 
 tui_profiles() {
-    local entries=() current choice key label w h s src marker recent_keys recent_count=0 rk
-    current=$(get_current_mode)
-    recent_keys=$(get_recent_profiles)
-    if [ -n "$recent_keys" ]; then
-        while IFS= read -r rk; do
-            [ -z "$rk" ] && continue
-            [ -z "${PROFILES[$rk]+x}" ] && continue  # profile no longer exists
-            IFS='|' read -r label w h s _ _ <<< "${PROFILES[$rk]}"
-            marker=""; [ "$label" = "$current" ] && marker="✓ "
-            entries+=("$rk" "★ ${marker}${label} ${w}x${h}")
-            recent_count=$((recent_count + 1))
-        done <<< "$recent_keys"
-        [ "$recent_count" -gt 0 ] && entries+=("" "─── all profiles ───")
-    fi
-    for key in $(sorted_profile_keys); do
-        IFS='|' read -r label w h s _ _ <<< "${PROFILES[$key]}"
-        if [ -f "$USER_PROFILES" ] && grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null; then
-            src="[user]"
-        else
-            src="[built-in]"
+    local current choice
+    while true; do
+        local entries=() key label w h s src marker recent_keys recent_count=0 rk
+        current=$(get_current_mode)
+        recent_keys=$(get_recent_profiles)
+        if [ -n "$recent_keys" ]; then
+            while IFS= read -r rk; do
+                [ -z "$rk" ] && continue
+                [ -z "${PROFILES[$rk]+x}" ] && continue  # profile no longer exists
+                IFS='|' read -r label w h s _ _ <<< "${PROFILES[$rk]}"
+                marker=""; [ "$label" = "$current" ] && marker="✓ "
+                entries+=("$rk" "★ ${marker}${label} ${w}x${h}")
+                recent_count=$((recent_count + 1))
+            done <<< "$recent_keys"
+            [ "$recent_count" -gt 0 ] && entries+=("" "─── all profiles ───")
         fi
-        marker=""; [ "$label" = "$current" ] && marker="✓ "
-        entries+=("$key" "${marker}${label} ${w}x${h} x${s} ${src}")
-    done
-    entries+=("custom"  "  Enter arbitrary resolution")
-    entries+=("manage"  "  Manage user profiles")
-    choice=$(whiptail --title "Profiles" --backtitle "Active: $current" \
-        --menu "Select a profile to apply:" 24 90 18 "${entries[@]}" \
-        3>&1 1>&2 2>&3) || return 0
-    [ -z "$choice" ] && return 0  # ignore the divider line
-    case "$choice" in
-        custom) tui_custom_resolution; return 0 ;;
-        manage) tui_manage_profiles;   return 0 ;;
-        *)
-            if apply_profile "$choice"; then
-                record_recent_profile "$choice"
-                IFS='|' read -r label _ <<< "${PROFILES[$choice]}"
-                whiptail --msgbox "Applied: $label" 7 50
+        for key in $(sorted_profile_keys); do
+            IFS='|' read -r label w h s _ _ <<< "${PROFILES[$key]}"
+            if [ -f "$USER_PROFILES" ] && grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null; then
+                src="[user]"
             else
-                whiptail --msgbox "Failed to apply profile '$choice'." 7 50
+                src="[built-in]"
             fi
-            ;;
-    esac
+            marker=""; [ "$label" = "$current" ] && marker="✓ "
+            entries+=("$key" "${marker}${label} ${w}x${h} x${s} ${src}")
+        done
+        entries+=("custom"  "  Enter arbitrary resolution")
+        entries+=("manage"  "  Manage user profiles")
+        entries+=("back"    "  Return to Main Menu")
+        choice=$(whiptail --title "Profiles" --backtitle "Active: $current" \
+            --menu "Select a profile to apply:" 24 90 18 "${entries[@]}" \
+            3>&1 1>&2 2>&3) || return 0
+        [ -z "$choice" ] && continue  # ignore the divider line
+        case "$choice" in
+            back)   return 0 ;;
+            custom) tui_custom_resolution ;;
+            manage) tui_manage_profiles ;;
+            *)
+                if apply_profile "$choice"; then
+                    record_recent_profile "$choice"
+                    IFS='|' read -r label _ <<< "${PROFILES[$choice]}"
+                    whiptail --msgbox "Applied: $label" 7 50
+                else
+                    whiptail --msgbox "Failed to apply profile '$choice'." 7 50
+                fi
+                ;;
+        esac
+    done
 }
 
 tui_manage_profiles() {
@@ -333,8 +343,8 @@ tui_config() {
                 ;;
             set-custom)
                 local ck cv
-                ck=$(whiptail --inputbox "Config key:" 9 50 "" 3>&1 1>&2 2>&3) || continue
-                [ -z "$ck" ] && continue
+                ck=$(whiptail --inputbox "Config key (e.g. MY_SETTING):" 9 58 "" 3>&1 1>&2 2>&3) || continue
+                [[ "$ck" =~ ^[A-Z][A-Z0-9_]*$ ]] || { whiptail --msgbox "Invalid key — use A-Z, 0-9, _ and start with a letter." 8 64; continue; }
                 cv=$(whiptail --inputbox "Value for ${ck}:" 9 50 "" 3>&1 1>&2 2>&3) || continue
                 show_config set "$ck" "$cv" && whiptail --msgbox "Set ${ck}=${cv}" 7 55
                 ;;
@@ -435,6 +445,7 @@ tui_diagnostics() {
             --menu "Inspect system health:" \
             24 88 10 \
             "doctor"          "Full Health Report" \
+            "self-test"       "Automated Self-Test (9 checks)" \
             "fix-all"         "Auto-Repair Issues" \
             "tailnet"         "Tailscale Tools" \
             "rustdesk-status" "RustDesk Session Status" \
@@ -446,6 +457,7 @@ tui_diagnostics() {
         case "$choice" in
             back)             return 0 ;;
             doctor)           run_panel_command "Doctor" show_doctor ;;
+            self-test)        run_panel_command "Self-Test" show_self_test ;;
             fix-all)          run_panel_command "Repair" doctor_fix ;;
             tailnet)          tui_tailnet ;;
             rustdesk-status)  run_panel_command "RustDesk Status" show_rustdesk status ;;
@@ -498,6 +510,7 @@ tui_system() {
             24 88 12 \
             "rustdesk"      "RustDesk Tools" \
             "config"        "Configuration" \
+            "watch-service" "Watch Service (auto-session on connect)" \
             "update"        "Update Remote Studio (git pull)" \
             "xorg-preview"  "Preview Generated Xorg Config" \
             "xorg-write"    "Write /etc/X11/xorg.conf (sudo)" \
@@ -511,6 +524,38 @@ tui_system() {
             back)          return 0 ;;
             rustdesk)      tui_rustdesk ;;
             config)        tui_config ;;
+            watch-service)
+                local ws_choice ws_st
+                ws_st=$(systemctl --user is-active remote-studio-watch 2>/dev/null || echo "inactive")
+                ws_choice=$(whiptail --title "Watch Service" \
+                    --menu "Auto-applies profile when RustDesk connects  [${ws_st}]" \
+                    14 68 5 \
+                    "status"  "Show Service Status" \
+                    "enable"  "Enable & Start" \
+                    "disable" "Stop & Disable" \
+                    "log"     "View Journal (last 50 lines)" \
+                    "back"    "Return" \
+                    3>&1 1>&2 2>&3) || continue
+                case "$ws_choice" in
+                    status)
+                        run_panel_command "Watch Service Status" systemctl --user status remote-studio-watch
+                        ;;
+                    enable)
+                        confirm_action "Enable and start remote-studio-watch service?" && \
+                            run_panel_command "Enable Watch Service" bash -c \
+                                "systemctl --user enable remote-studio-watch && systemctl --user start remote-studio-watch"
+                        ;;
+                    disable)
+                        confirm_action "Stop and disable remote-studio-watch service?" && \
+                            run_panel_command "Disable Watch Service" bash -c \
+                                "systemctl --user stop remote-studio-watch; systemctl --user disable remote-studio-watch"
+                        ;;
+                    log)
+                        run_panel_command "Watch Service Log" \
+                            journalctl --user -u remote-studio-watch -n 50 --no-pager
+                        ;;
+                esac
+                ;;
             update)
                 confirm_action "Pull latest from git and reinstall?" && \
                     run_panel_command "Update" show_update

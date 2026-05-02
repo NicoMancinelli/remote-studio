@@ -59,13 +59,10 @@ backup_configs() {
 prune_backups() {
     local backup_root="$HOME/.config/remote-studio/backups"
     [ -d "$backup_root" ] || return 0
-    # Keep the 10 most recent backups, delete the rest
-    local count=0
-    find "$backup_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | while read -r dir; do
-        count=$((count + 1))
-        if [ "$count" -gt 10 ]; then
-            run rm -rf "$dir"
-        fi
+    local to_delete=()
+    mapfile -t to_delete < <(find "$backup_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | tail -n +11)
+    for dir in "${to_delete[@]}"; do
+        run rm -rf "$dir"
     done
 }
 
@@ -90,19 +87,34 @@ install_user() {
     else
         run sudo ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
     fi
+    echo "  Linked   /usr/local/bin/res -> $ROOT_DIR/res.sh"
 
-    run ln -sfn "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
+    if [ -e "$HOME/.xsessionrc" ] && [ ! -L "$HOME/.xsessionrc" ]; then
+        echo "  SKIPPED  ~/.xsessionrc exists and is not a symlink — move or remove it manually"
+    else
+        run ln -sfn "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
+        echo "  Linked   ~/.xsessionrc -> $ROOT_DIR/config/xsessionrc"
+    fi
+
     run ln -sfn "$ROOT_DIR/applet/applet.js" "$APPLET_DIR/applet.js"
     run ln -sfn "$ROOT_DIR/applet/metadata.json" "$APPLET_DIR/metadata.json"
+    echo "  Linked   $APPLET_DIR/"
 
     if [ ! -f "$CONFIG_DIR/profiles.conf" ]; then
         run install -m 0644 "$ROOT_DIR/profiles.conf.example" "$CONFIG_DIR/profiles.conf"
+        echo "  Copied   $CONFIG_DIR/profiles.conf"
+    else
+        echo "  Skipped  $CONFIG_DIR/profiles.conf (already exists)"
     fi
 
     if [ ! -f "$RUSTDESK_DIR/RustDesk_default.toml" ]; then
         run install -m 0600 "$ROOT_DIR/config/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml"
+        echo "  Copied   $RUSTDESK_DIR/RustDesk_default.toml"
+    else
+        echo "  Skipped  $RUSTDESK_DIR/RustDesk_default.toml (already exists)"
     fi
 
+    echo ""
     echo "Remote Studio user install complete."
 }
 
