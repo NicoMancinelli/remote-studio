@@ -71,6 +71,11 @@ copy_file "$ROOT_DIR/config/RustDesk_quality.toml"  "$PKG_DIR/usr/share/remote-s
 copy_file "$ROOT_DIR/config/RustDesk_speed.toml"    "$PKG_DIR/usr/share/remote-studio/RustDesk_speed.toml"    0644
 copy_file "$ROOT_DIR/config/xorg.conf"              "$PKG_DIR/usr/share/remote-studio/xorg.conf"              0644
 
+# Library modules
+for libfile in "$ROOT_DIR/lib/"*.sh; do
+    copy_file "$libfile" "$PKG_DIR/usr/share/remote-studio/lib/$(basename "$libfile")" 0644
+done
+
 # Logrotate config
 copy_file "$ROOT_DIR/config/logrotate.d/remote-studio" "$PKG_DIR/etc/logrotate.d/remote-studio" 0644
 
