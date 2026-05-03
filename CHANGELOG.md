@@ -1,5 +1,43 @@
 # Changelog
 
+## [8.1] — 2026-05-02
+
+### Added
+- Cinnamon applet: `Gio.FileMonitor` file-watch replaces 600 ms polling loop (lower CPU)
+- Cinnamon applet: connection quality indicator in panel label (● Direct / ◐ Relayed)
+- Cinnamon applet: Copy Direct Address menu item and notification mute/unmute toggle
+- TUI profiles menu now loops — switch profiles without returning to the main menu
+- TUI quick actions use `DEFAULT_PROFILE` at runtime instead of hardcoding "mac"
+- TUI dashboard auto-refreshes every 15 s via `timeout`; Escape/Close still exits
+- TUI diagnostics: Automated Self-Test entry wired to `show_self_test`
+- TUI system menu: Watch Service submenu (status / enable / disable / journal)
+- `res config set-custom`: validates key format (`^[A-Z][A-Z0-9_]*$`)
+- `install.sh install`: per-step Linked/Skipped/Copied feedback
+- `install.sh`: `~/.xsessionrc` safety check — skips with warning if file is not a symlink
+- `res update`: shows version and commit SHA before and after pull
+- `install-remote-studio.sh`: `--help` flag with usage, requirements, and post-install steps
+- Watch service submenu in TUI System menu for enable/disable/status/log
+- ipad13 profile (iPad Pro 13″, 2064×2752)
+
+### Fixed
+- `PROFILES["$key"]` was written as `PROFILES[key]` — the literal string "key" was used as the array index, making the PROFILES array effectively empty (all profile commands broken)
+- `exit 0` at end of CLI dispatch swallowed function return codes (`res session <invalid>` always exited 0)
+- `prune_backups`: pipe-into-while ran in a subshell so the counter never incremented; rewrote with `mapfile`
+- `get_warning_summary`: removed `log_event` call that fired every 30 s when applet symlink was wrong, flooding the log
+- `show_self_test` log_event check: was running in a `bash -c` subshell where the function isn't defined (always failed); now runs inline
+- `merge_rustdesk_options`: removed pointless tmpfile hop — options.toml has no identity fields, plain `cp` is correct
+- `tui_dashboard`: Escape key (exit 255) now closes instead of triggering a redraw
+- `config/xsessionrc`: added `-r` to `read`, fixed unquoted variables, added `|| true` guards on xrandr/gsettings calls
+- `applet.js` `PROFILES_FILE`: falls back to `/usr/share/remote-studio/profiles.conf` when `/usr/local/bin/res` is not a symlink (.deb installs)
+- `Makefile` `test` target: was `shellcheck *.sh` (missed all of `lib/`); now covers `res.sh install.sh install-remote-studio.sh lib/*.sh`
+- `shellcheck.yml`: pinned `action-shellcheck` to `2.0.0` (was `@master`); added `tests/**` to path triggers; removed `needs: shellcheck` from bats job
+
+### Changed
+- `res.sh` modularised into `lib/core.sh`, `lib/engine.sh`, `lib/diagnostics.sh`, `lib/services.sh`, `lib/config.sh`, `lib/tui.sh`
+- DPI calculation uses `awk` instead of `bc` (removes `bc` as a runtime dependency)
+- `git fetch` in `show_doctor` uses `http.lowSpeedTime=3` and `http.connectTimeout=3` to avoid hanging on offline machines
+- README rewritten as a full project homepage (features, install, profiles table, CLI reference, architecture tree, configuration)
+
 ## [8.0] — current
 
 - **Session presets**: `res session start <profile>` applies display mode, performance mode, caffeine, and power profile in one step; `res session stop` restores the prior state

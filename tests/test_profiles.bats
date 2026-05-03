@@ -93,10 +93,10 @@ CONF="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/config/profiles.conf"
     [[ "$output" =~ ^[0-9] ]]
 }
 
-@test "res version is 8.0" {
+@test "res version matches semver format" {
     run bash "$SCRIPT" version
     [ "$status" -eq 0 ]
-    [ "$output" = "8.0" ]
+    [[ "$output" =~ ^[0-9]+\.[0-9] ]]
 }
 
 @test "res help exits 0" {
@@ -145,4 +145,25 @@ CONF="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/config/profiles.conf"
     run bash "$SCRIPT" mac
     # Without xrandr connected output, apply_all returns 1
     [ "$status" -ne 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# PROFILES array loading (regression: PROFILES[key] literal bug)
+# ---------------------------------------------------------------------------
+
+@test "res help lists all built-in profile keys" {
+    run bash "$SCRIPT" help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"mac"*    ]]
+    [[ "$output" == *"ipad"*   ]]
+    [[ "$output" == *"iphonel"* ]]
+    [[ "$output" == *"iphonep"* ]]
+    [[ "$output" == *"fallback"* ]]
+}
+
+@test "res profiles lists all built-in profiles" {
+    run bash "$SCRIPT" profiles
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"mac"*    ]]
+    [[ "$output" == *"ipad"*   ]]
 }

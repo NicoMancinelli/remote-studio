@@ -27,7 +27,7 @@ if [ -f "$STATE_FILE" ]; then
         gsettings set org.cinnamon.desktop.interface text-scaling-factor "$text_scale" 2>/dev/null || true
         gsettings set org.cinnamon.desktop.interface cursor-size "$cursor" 2>/dev/null || true
 
-        dpi=$(echo "96 * $scaling" | bc)
+        dpi=$(awk "BEGIN { printf \"%d\", 96 * $scaling }")
         echo "Xft.dpi: $dpi" | xrdb -merge 2>/dev/null || true
     fi
 fi

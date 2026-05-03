@@ -48,7 +48,11 @@ show_doctor() {
             doctor_check "tailscale" "WARN" "no tailnet IP (tailscale up?)"
         fi
     fi
-    git -C "$ROOT_DIR" fetch --quiet 2>/dev/null || true
+    git -C "$ROOT_DIR" \
+        -c http.lowSpeedLimit=1000 \
+        -c http.lowSpeedTime=3 \
+        -c http.connectTimeout=3 \
+        fetch --quiet 2>/dev/null || true
     local head upstream
     head=$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)
     upstream=$(git -C "$ROOT_DIR" rev-parse '@{u}' 2>/dev/null || true)

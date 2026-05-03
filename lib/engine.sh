@@ -4,7 +4,7 @@
 apply_all() {
     local width=$1; local height=$2; local scaling=$3; local text_scale=$4; local cursor=$5; local label=$6
     local dpi
-    dpi=$(echo "96 * $scaling" | bc)
+    dpi=$(awk "BEGIN { printf \"%d\", 96 * $scaling }")
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
     [ -z "$OUTPUT" ] && return 1
     MODE_NAME=$(mode_name_for "$width" "$height")
