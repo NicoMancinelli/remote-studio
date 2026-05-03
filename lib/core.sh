@@ -109,7 +109,6 @@ get_warning_summary() {
     done
     if [ "$applet_ok" -eq 0 ]; then
         warnings=$((warnings + 1)); messages+=("applet-symlink")
-        log_event "Warning: applet-symlink missing or incorrect"
     fi
 
     local ts_status

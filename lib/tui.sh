@@ -122,11 +122,12 @@ ${recent_log}"
             --yes-button "Refresh" --no-button "Close" \
             --yesno "$body" "$lines" "$cols"
         _exit=$?
-        if [ "$_exit" -eq 1 ]; then
-            return 0  # Close clicked
+        if [ "$_exit" -eq 0 ] || [ "$_exit" -eq 124 ]; then
+            # Refresh clicked (0) or 15s auto-refresh timeout (124) — redraw
+            _WARN_CACHE=""
+        else
+            return 0  # Close (1) or Escape (255)
         fi
-        # 0 = Refresh clicked, 124 = 15s timeout — both redraw
-        _WARN_CACHE=""
     done
 }
 

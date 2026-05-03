@@ -53,12 +53,8 @@ merge_rustdesk_config() {
 
 merge_rustdesk_options() {
     local source=$1 target=$2
-    [ -f "$target" ] || { cp "$source" "$target"; return 0; }
-    local tmp_new
-    tmp_new=$(mktemp)
-    cp "$source" "$tmp_new"
-    cp "$tmp_new" "$target"
-    rm "$tmp_new"
+    # RustDesk2.options.toml has no identity fields — safe to overwrite entirely
+    cp "$source" "$target"
 }
 
 show_rustdesk() {

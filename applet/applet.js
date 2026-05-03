@@ -11,8 +11,15 @@ const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || "/tmp";
 const STATUS_DIR = GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS_DIR) ? RUNTIME_DIR + "/remote-studio" : "/tmp/remote-studio";
 const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE = GLib.get_home_dir() + "/.res_state";
-const ROOT_DIR = GLib.path_get_dirname(GLib.file_read_link(RES_CMD, null) || RES_CMD);
-const PROFILES_FILE = ROOT_DIR + "/config/profiles.conf";
+
+// Resolve the profiles file: follow the res symlink to find the repo's config/,
+// then fall back to the .deb install path at /usr/share/remote-studio/.
+const _resLink = GLib.file_read_link(RES_CMD, null);
+const _repoRoot = _resLink ? GLib.path_get_dirname(_resLink) : null;
+const _repoProfiles = _repoRoot ? _repoRoot + "/config/profiles.conf" : null;
+const PROFILES_FILE = (_repoProfiles && GLib.file_test(_repoProfiles, GLib.FileTest.EXISTS))
+    ? _repoProfiles
+    : "/usr/share/remote-studio/profiles.conf";
 const USER_PROFILES_FILE = GLib.get_home_dir() + "/.config/remote-studio/profiles.conf";
 
 // Map mode names to panel icons

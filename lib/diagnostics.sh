@@ -158,7 +158,13 @@ show_self_test() {
     _t "ROOT_DIR exists"            test -d "$ROOT_DIR"
     _t "profiles file readable"     test -r "$DEFAULT_PROFILES"
     _t "PROFILES populated"         test "${#PROFILES[@]}" -gt 0
-    _t "log_event writes log"       bash -c "log_event 'self-test ping' && grep -q 'self-test ping' '$LOG_FILE'"
+    local _probe="self-test-probe-$$"
+    log_event "$_probe"
+    if grep -q "$_probe" "$LOG_FILE" 2>/dev/null; then
+        printf "  [PASS] log_event writes log\n"; pass=$((pass + 1))
+    else
+        printf "  [FAIL] log_event writes log\n"; fail=$((fail + 1))
+    fi
     _t "status output writable"     bash -c "$ROOT_DIR/res.sh status > /dev/null"
     _t "version reports"            bash -c "$ROOT_DIR/res.sh version | grep -q ."
     _t "doctor exits 0"             bash -c "$ROOT_DIR/res.sh doctor > /dev/null"
