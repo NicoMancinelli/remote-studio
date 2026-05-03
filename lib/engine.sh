@@ -18,17 +18,23 @@ apply_all() {
     MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
     MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
     # shellcheck disable=SC2086
-    xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null
-    xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>/dev/null
-    if xrandr --output "$OUTPUT" --mode "$MODE_NAME"; then
-        gsettings set org.cinnamon.desktop.interface scaling-factor "$scaling" 2>/dev/null
-        gsettings set org.cinnamon.desktop.interface text-scaling-factor "$text_scale" 2>/dev/null
-        gsettings set org.cinnamon.desktop.interface cursor-size "$cursor" 2>/dev/null
-        echo "Xft.dpi: $dpi" | xrdb -merge
-        echo "$width $height $scaling $text_scale $cursor '$label'" > "$STATE_FILE"
-        log_event "Mode: $label"
-        return 0
-    fi
+    xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null || true
+    local xrandr_err
+    xrandr_err=$(xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>&1) || {
+        echo "Error: could not add mode $MODE_NAME: $xrandr_err" >&2
+        return 1
+    }
+    xrandr_err=$(xrandr --output "$OUTPUT" --mode "$MODE_NAME" 2>&1) || {
+        echo "Error: could not apply mode $MODE_NAME: $xrandr_err" >&2
+        return 1
+    }
+    gsettings set org.cinnamon.desktop.interface scaling-factor "$scaling" 2>/dev/null
+    gsettings set org.cinnamon.desktop.interface text-scaling-factor "$text_scale" 2>/dev/null
+    gsettings set org.cinnamon.desktop.interface cursor-size "$cursor" 2>/dev/null
+    echo "Xft.dpi: $dpi" | xrdb -merge
+    echo "$width $height $scaling $text_scale $cursor '$label'" > "$STATE_FILE"
+    log_event "Mode: $label"
+    return 0
 }
 
 apply_profile() {
@@ -84,9 +90,13 @@ session_stop() {
         previous_state=$(grep '^state=' "$SESSION_FILE" | sed 's/^state=//')
         if [ -n "$previous_state" ]; then
             echo "$previous_state" > "$STATE_FILE"
-            read -r width height scaling text_scale cursor rest <<< "$previous_state"
-            label=$(echo "$previous_state" | awk -F"'" '{print $2}')
-            apply_all "$width" "$height" "$scaling" "$text_scale" "$cursor" "${label:-Restored}"
+            read -r s_width s_height s_scale s_ts s_cursor rest <<< "$previous_state"
+            s_label=$(echo "$previous_state" | awk -F"'" '{print $2}')
+            if [[ -z "$s_width" || ! "$s_width" =~ ^[0-9]+$ || -z "$s_height" || ! "$s_height" =~ ^[0-9]+$ ]]; then
+                log_event "session_stop: no valid saved state, skipping display restore"
+            else
+                apply_all "$s_width" "$s_height" "$s_scale" "$s_ts" "$s_cursor" "${s_label:-Restored}"
+            fi
         fi
         grep -q '^speed=OFF$' "$SESSION_FILE" && [ "$(speed_state)" = "ON" ] && do_action speed
         grep -q '^caffeine=OFF$' "$SESSION_FILE" && [ "$(caffeine_state)" = "ON" ] && do_action caf
@@ -151,9 +161,32 @@ generate_xorg() {
         mp=$(echo "$mi" | cut -d' ' -f3-)
         lines+=("    Modeline \"$m\" $mp"); mode_names+=("\"$m\"")
     done
+
+    # Detect GPU driver
+    local gpu_info driver
+    gpu_info=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
+    if echo "$gpu_info" | grep -qi 'nvidia'; then
+        driver="nvidia"
+    elif echo "$gpu_info" | grep -qi 'amd\|ati\|radeon'; then
+        driver="amdgpu"
+    elif echo "$gpu_info" | grep -qi 'intel'; then
+        driver="intel"
+    else
+        driver="modesetting"
+    fi
+
+    # Derive PreferredMode from the mac profile if available
+    local pref_mode="2560x1664_60.00"
+    if [ -n "${PROFILES[mac]:-}" ]; then
+        IFS='|' read -r _ pm_w pm_h _ _ _ <<< "${PROFILES[mac]}"
+        pref_mode="${pm_w}x${pm_h}_60.00"
+    fi
+
     {
-        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo '    Driver "nvidia"'; echo '    Option "ConnectedMonitor" "DFP"'; echo 'EndSection'; echo
-        echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo '    Option "PreferredMode" "2560x1664_60.00"'; echo 'EndSection'; echo
+        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo "    Driver \"$driver\""
+        [ "$driver" = "nvidia" ] && echo '    Option "ConnectedMonitor" "DFP"'
+        echo 'EndSection'; echo
+        echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo "    Option \"PreferredMode\" \"$pref_mode\""; echo 'EndSection'; echo
         echo 'Section "Screen"'; echo '    Identifier "Default Screen"'; echo '    Monitor "Configured Monitor"'; echo '    Device "Configured Video Device"'; echo '    DefaultDepth 24'; echo '    SubSection "Display"'; echo '        Depth 24'; echo "        Modes ${mode_names[*]} \"1024x768\""; echo '        Virtual 3840 2160'; echo '    EndSubSection'; echo 'EndSection'
     } > "${out:-/dev/stdout}"
 }

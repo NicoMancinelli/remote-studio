@@ -42,7 +42,10 @@ merge_rustdesk_config() {
     while read -r line; do
         field=$(echo "$line" | cut -d' ' -f1)
         if grep -q "^$field =" "$tmp_new"; then
-            sed -i "s/^$field =.*/$line/" "$tmp_new"
+            awk -v field="$field" -v replacement="$line" '
+                $0 ~ ("^" field " =") { print replacement; next }
+                { print }
+            ' "$tmp_new" > "${tmp_new}.awk" && mv "${tmp_new}.awk" "$tmp_new"
         else
             echo "$line" >> "$tmp_new"
         fi

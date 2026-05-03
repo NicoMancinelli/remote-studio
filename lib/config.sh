@@ -16,14 +16,16 @@ show_config() {
             ;;
         set)
             { [ -z "${2:-}" ] || [ -z "${3:-}" ]; } && { echo "Usage: res config set KEY VALUE"; return 1; }
+            local key="$2" val="$3"
             mkdir -p "$(dirname "$USER_CONFIG")"
-            if grep -q "^${2}=" "$USER_CONFIG" 2>/dev/null; then
-                sed -i "s/^${2}=.*/${2}=${3}/" "$USER_CONFIG"
+            if grep -q "^${key}=" "$USER_CONFIG" 2>/dev/null; then
+                awk -v k="$key" -v v="$val" 'BEGIN{OFS=FS="="} $1==k{print k"="v; next} {print}' \
+                    "$USER_CONFIG" > "${USER_CONFIG}.tmp" && mv "${USER_CONFIG}.tmp" "$USER_CONFIG"
             else
-                echo "${2}=${3}" >> "$USER_CONFIG"
+                echo "${key}=${val}" >> "$USER_CONFIG"
             fi
-            echo "Set ${2}=${3} in $USER_CONFIG"
-            log_event "Config set: ${2}=${3}"
+            echo "Set ${key}=${val} in $USER_CONFIG"
+            log_event "Config set: ${key}=${val}"
             ;;
         *) echo "Usage: res config [show|get KEY|set KEY VALUE]"; return 1 ;;
     esac
@@ -125,17 +127,19 @@ show_update() {
 }
 
 show_profiles_list() {
-    printf "%-12s %-30s %s\n" "KEY" "LABEL" "SOURCE"
-    while IFS='=' read -r key value; do
-        [[ "$key" =~ ^[[:space:]]*# ]] && continue; [[ -z "$key" || -z "$value" ]] && continue
-        IFS='|' read -r label _ _ _ _ _ <<< "$value"
-        printf "%-12s %-30s %s\n" "$(echo "$key" | xargs)" "$(echo "$label" | xargs)" "$DEFAULT_PROFILES"
-    done < "$DEFAULT_PROFILES"
-    if [ -f "$USER_PROFILES" ]; then
-        while IFS='=' read -r key value; do
-            [[ "$key" =~ ^[[:space:]]*# ]] && continue; [[ -z "$key" || -z "$value" ]] && continue
-            IFS='|' read -r label _ _ _ _ _ <<< "$value"
-            printf "%-12s %-30s %s\n" "$(echo "$key" | xargs)" "$(echo "$label" | xargs)" "$USER_PROFILES (override)"
-        done < "$USER_PROFILES"
-    fi
+    local cur_mode
+    cur_mode=$(get_current_mode)
+    local sorted_keys
+    mapfile -t sorted_keys < <(printf '%s\n' "${!PROFILES[@]}" | sort)
+    printf "%-12s %-26s %-14s %s\n" "KEY" "LABEL" "RESOLUTION" "SOURCE"
+    printf "%-12s %-26s %-14s %s\n" "---" "-----" "----------" "------"
+    local k label w h scale src active_marker
+    for k in "${sorted_keys[@]}"; do
+        IFS='|' read -r label w h scale _ _ <<< "${PROFILES[$k]}"
+        src="default"
+        grep -q "^${k}=" "$USER_PROFILES" 2>/dev/null && src="user"
+        active_marker=""
+        [ "$label" = "$cur_mode" ] && active_marker=" *"
+        printf "%-12s %-26s %-14s %s%s\n" "$k" "$label" "${w}x${h}@${scale}" "$src" "$active_marker"
+    done
 }

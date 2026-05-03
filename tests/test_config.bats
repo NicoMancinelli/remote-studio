@@ -113,3 +113,50 @@ setup() {
     run bash "$SCRIPT" session status
     [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# session round-trip — stop edge-cases and start/stop lifecycle
+# ---------------------------------------------------------------------------
+
+@test "session stop with missing SESSION_FILE exits cleanly" {
+    # SESSION_FILE is derived from $HOME (set in setup to BATS_TEST_TMPDIR).
+    # Ensure it does not exist, then verify stop returns 0.
+    local session_file="$BATS_TEST_TMPDIR/.config/remote-studio/session.state"
+    rm -f "$session_file"
+    run bash "$SCRIPT" session stop
+    [ "$status" -eq 0 ]
+}
+
+@test "session stop with missing state field exits cleanly" {
+    # Regression for the empty-state guard: a SESSION_FILE with no state= line
+    # must not cause session_stop to crash or return non-zero.
+    local session_file="$BATS_TEST_TMPDIR/.config/remote-studio/session.state"
+    mkdir -p "$(dirname "$session_file")"
+    printf 'started_at=2024-01-01 00:00:00\nprofile=mac\n' > "$session_file"
+    run bash "$SCRIPT" session stop
+    [ "$status" -eq 0 ]
+}
+
+@test "session start writes SESSION_FILE" {
+    # Requires a live X display; skip in headless CI.
+    [ -n "${DISPLAY:-}" ] || skip "no X display"
+    local state_file="$BATS_TEST_TMPDIR/.res_state"
+    local session_file="$BATS_TEST_TMPDIR/.config/remote-studio/session.state"
+    # Provide a fake prior state so session_start has something to record.
+    printf "1280 800 1 1.0 24 'Mac'\n" > "$state_file"
+    run bash "$SCRIPT" session start mac
+    [ -f "$session_file" ]
+    grep -q 'profile=' "$session_file"
+}
+
+@test "session start then stop removes SESSION_FILE" {
+    # Requires a live X display; skip in headless CI.
+    [ -n "${DISPLAY:-}" ] || skip "no X display"
+    local session_file="$BATS_TEST_TMPDIR/.config/remote-studio/session.state"
+    # Write a SESSION_FILE that mimics what session_start would have produced,
+    # with a valid numeric state so session_stop can attempt display restore.
+    mkdir -p "$(dirname "$session_file")"
+    printf 'started_at=2024-01-01 00:00:00\nprofile=mac\nspeed=OFF\ncaffeine=OFF\nstate=1280 800 1 1.0 24 '"'"'Mac'"'"'\n' > "$session_file"
+    run bash "$SCRIPT" session stop
+    [ ! -f "$session_file" ]
+}

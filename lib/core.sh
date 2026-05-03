@@ -92,12 +92,17 @@ get_warning_summary() {
     renderer=$(get_renderer_summary 2>/dev/null || true)
     rustdesk_state=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
     tailscale_state=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
-    tailnet_ip=$(get_tailnet_ip)
     current=$(xrandr 2>/dev/null | awk '/ connected/ {out=$1} /\*/ {print out " " $1; exit}')
+
+    # Single tailscale subprocess: extract both IP and BackendState from one JSON call
+    local ts_json ts_ip ts_state
+    ts_json=$(tailscale status --json 2>/dev/null)
+    ts_ip=$(printf '%s' "$ts_json" | grep -o '"TailscaleIPs":\["[^"]*"' | grep -o '[0-9][0-9.]*' | head -1)
+    ts_state=$(printf '%s' "$ts_json" | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4)
 
     if [[ "$renderer" == *llvmpipe* ]]; then warnings=$((warnings + 1)); messages+=("software-rendering"); fi
     if [ "$rustdesk_state" != "active" ]; then warnings=$((warnings + 1)); messages+=("rustdesk-${rustdesk_state:-unknown}"); fi
-    if [ "$tailscale_state" != "active" ] || [ -z "$tailnet_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
+    if [ "$tailscale_state" != "active" ] || [ -z "$ts_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
     if [ -z "$current" ]; then warnings=$((warnings + 1)); messages+=("display"); fi
 
     applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
@@ -111,10 +116,8 @@ get_warning_summary() {
         warnings=$((warnings + 1)); messages+=("applet-symlink")
     fi
 
-    local ts_status
-    ts_status=$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || true)
-    if [ "$ts_status" = "NeedsLogin" ] || [ "$ts_status" = "Stopped" ]; then
-        warnings=$((warnings + 1)); messages+=("tailscale-${ts_status,,}")
+    if [ "$ts_state" = "NeedsLogin" ] || [ "$ts_state" = "Stopped" ]; then
+        warnings=$((warnings + 1)); messages+=("tailscale-${ts_state,,}")
     fi
 
     if [ "$warnings" -eq 0 ]; then
