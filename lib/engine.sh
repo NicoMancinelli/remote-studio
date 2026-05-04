@@ -78,7 +78,11 @@ session_start() {
     local profile="${1:-$DEFAULT_PROFILE}"
     mkdir -p "$(dirname "$SESSION_FILE")"
     { echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"; echo "profile=$profile"; echo "speed=$(speed_state)"; echo "caffeine=$(caffeine_state)"; echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"; } > "$SESSION_FILE"
-    apply_profile "$profile" || return 1
+    if ! apply_profile "$profile"; then
+        rm -f "$SESSION_FILE"
+        echo "Failed to apply profile '$profile'" >&2
+        return 1
+    fi
     [ "$(speed_state)" = "ON" ] || do_action speed
     [ "$(caffeine_state)" = "ON" ] || do_action caf
     if command -v powerprofilesctl >/dev/null 2>&1; then powerprofilesctl set performance 2>/dev/null || true; fi
@@ -122,7 +126,7 @@ show_watch() {
     trap 'log_event "Watch: stopped (signal)"; exit 0' SIGTERM SIGINT
     while true; do
         local users
-        users=$(ss -tnp 2>/dev/null | grep -c -i "rustdesk.*ESTAB" || true)
+        users=$(ss -tnp 2>/dev/null | awk '/ESTAB/ && /rustdesk/{print $5}' | cut -d: -f1 | sort -u | wc -l)
         if [ "$users" -gt 0 ] && [ "$prev_users" -eq 0 ]; then
             log_event "Watch: session connected ($users user(s))"
             if [ "${AUTO_SESSION:-false}" = "true" ]; then

@@ -101,7 +101,7 @@ install_user() {
     echo "  Linked   $APPLET_DIR/"
 
     if [ ! -f "$CONFIG_DIR/profiles.conf" ]; then
-        run install -m 0644 "$ROOT_DIR/profiles.conf.example" "$CONFIG_DIR/profiles.conf"
+        run install -m 0644 "$ROOT_DIR/config/profiles.conf" "$CONFIG_DIR/profiles.conf"
         echo "  Copied   $CONFIG_DIR/profiles.conf"
     else
         echo "  Skipped  $CONFIG_DIR/profiles.conf (already exists)"

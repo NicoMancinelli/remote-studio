@@ -62,7 +62,12 @@ MyApplet.prototype = {
     _scheduleUpdate: function() {
         if (this._timeout) Mainloop.source_remove(this._timeout);
 
-        GLib.spawn_command_line_async("/bin/bash -c \"mkdir -p " + STATUS_DIR + " && " + RES_CMD + " status > " + STATUS_FILE + "\"");
+        GLib.spawn_async(null,
+            ["/bin/bash", "-c",
+             "mkdir -p " + GLib.shell_quote(STATUS_DIR) +
+             " && " + GLib.shell_quote(RES_CMD) +
+             " status > " + GLib.shell_quote(STATUS_FILE)],
+            null, GLib.SpawnFlags.SEARCH_PATH, null, null);
 
         this._timeout = Mainloop.timeout_add_seconds(10, () => {
             this._timeout = null;
@@ -256,7 +261,7 @@ MyApplet.prototype = {
                 St.IconType.SYMBOLIC
             );
             copyItem.connect('activate', () => {
-                Util.spawnCommandLine("bash -c \"echo -n '" + directAddr + "' | xclip -selection clipboard\"");
+                Util.spawnCommandLine("bash -c \"echo -n " + GLib.shell_quote(directAddr) + " | xclip -selection clipboard\"");
             });
             this.menu.addMenuItem(copyItem);
         }
@@ -274,14 +279,14 @@ MyApplet.prototype = {
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         let studioItem = new PopupMenu.PopupIconMenuItem("Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC);
-        studioItem.connect('activate', () => { Util.spawnCommandLine("x-terminal-emulator -e " + RES_CMD); });
+        studioItem.connect('activate', () => { Util.spawn(["x-terminal-emulator", "-e", RES_CMD]); });
         this.menu.addMenuItem(studioItem);
     },
 
     _addMenuItem: function(label, icon, arg) {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
         item.connect('activate', () => {
-            Util.spawnCommandLine(RES_CMD + " " + arg);
+            Util.spawn([RES_CMD].concat(arg.split(" ")));
             Mainloop.timeout_add(1000, () => {
                 this._scheduleUpdate();
                 this._buildMenu();
@@ -294,7 +299,7 @@ MyApplet.prototype = {
     _addTerminalItem: function(label, icon, arg) {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
         item.connect('activate', () => {
-            Util.spawnCommandLine("x-terminal-emulator -e " + RES_CMD + " " + arg);
+            Util.spawn(["x-terminal-emulator", "-e", RES_CMD].concat(arg.split(" ")));
         });
         this.menu.addMenuItem(item);
     },

@@ -82,10 +82,14 @@ if [ -n "${1:-}" ]; then
                     read -r -p "Save as profile? [y/N] " ans
                     if [[ "$ans" =~ ^[Yy]$ ]]; then
                         read -r -p "Profile key (e.g. 'work'): " pkey
-                        mkdir -p "$(dirname "$USER_PROFILES")"
-                        echo "${pkey}=Custom ${2}x${3}|${2}|${3}|${local_s}|${local_ts}|${local_cursor}" >> "$USER_PROFILES"
-                        echo "Saved to $USER_PROFILES"
-                        log_event "Profile saved: $pkey ${2}x${3}"
+                        if [[ ! "$pkey" =~ ^[a-z][a-z0-9_-]*$ ]]; then
+                            echo "Invalid key '$pkey': use lowercase letters, digits, hyphens, underscores (e.g. 'work')"
+                        else
+                            mkdir -p "$(dirname "$USER_PROFILES")"
+                            echo "${pkey}=Custom ${2}x${3}|${2}|${3}|${local_s}|${local_ts}|${local_cursor}" >> "$USER_PROFILES"
+                            echo "Saved to $USER_PROFILES"
+                            log_event "Profile saved: $pkey ${2}x${3}"
+                        fi
                     fi
                 fi
             fi

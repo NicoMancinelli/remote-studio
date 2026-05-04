@@ -246,7 +246,11 @@ tui_manage_profiles() {
         back)   return 0 ;;
         delete)
             if whiptail --yesno "Delete user profile '$choice'?" 8 50; then
-                sed -i "/^${choice}=/d" "$USER_PROFILES"
+                cp "$USER_PROFILES" "${USER_PROFILES}.bak" 2>/dev/null || true
+                sed -i "/^${choice}=/d" "$USER_PROFILES" || {
+                    whiptail --msgbox "Delete failed — profiles unchanged." 7 55 3>&1 1>&2 2>&3
+                    return 1
+                }
                 log_event "User profile deleted: $choice"
                 whiptail --msgbox "Deleted '$choice'." 7 50
             fi
@@ -265,13 +269,14 @@ tui_manage_profiles() {
             new_cursor=$(awk "BEGIN { printf \"%d\", 24 * $new_s }")
             new_label="Custom ${new_w}x${new_h}"
             tmp_profiles=$(mktemp)
+            cp "$USER_PROFILES" "${USER_PROFILES}.bak" 2>/dev/null || true
             while IFS= read -r line; do
                 if [[ "$line" =~ ^${choice}= ]]; then
                     printf '%s=%s|%s|%s|%s|%s|%s\n' "$choice" "$new_label" "$new_w" "$new_h" "$new_s" "$new_ts" "$new_cursor"
                 else
                     printf '%s\n' "$line"
                 fi
-            done < "$USER_PROFILES" > "$tmp_profiles"
+            done < "$USER_PROFILES" > "$tmp_profiles" || { rm -f "$tmp_profiles"; whiptail --msgbox "Edit failed — profiles unchanged." 7 55 3>&1 1>&2 2>&3; return 1; }
             mv "$tmp_profiles" "$USER_PROFILES"
             log_event "User profile edited: $choice -> ${new_w}x${new_h}"
             whiptail --msgbox "Updated '$choice' to ${new_w}x${new_h}." 7 55

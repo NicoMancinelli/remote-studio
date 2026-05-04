@@ -19,7 +19,7 @@ show_config() {
             local key="$2" val="$3"
             mkdir -p "$(dirname "$USER_CONFIG")"
             if grep -q "^${key}=" "$USER_CONFIG" 2>/dev/null; then
-                awk -v k="$key" -v v="$val" 'BEGIN{OFS=FS="="} $1==k{print k"="v; next} {print}' \
+                awk -v k="$key" -v v="$val" '$0 ~ ("^" k "=") { print k "=" v; next } { print }' \
                     "$USER_CONFIG" > "${USER_CONFIG}.tmp" && mv "${USER_CONFIG}.tmp" "$USER_CONFIG"
             else
                 echo "${key}=${val}" >> "$USER_CONFIG"

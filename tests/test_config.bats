@@ -160,3 +160,55 @@ setup() {
     run bash "$SCRIPT" session stop
     [ ! -f "$session_file" ]
 }
+
+# ---------------------------------------------------------------------------
+# config set/get round-trip
+# ---------------------------------------------------------------------------
+
+@test "config set then get round-trips a value" {
+    run bash "$SCRIPT" config set TESTKEY hello
+    [ "$status" -eq 0 ]
+    run bash "$SCRIPT" config get TESTKEY
+    [ "$status" -eq 0 ]
+    [ "$output" = "hello" ]
+}
+
+@test "config set same key twice produces exactly one line" {
+    local user_config="$BATS_TEST_TMPDIR/.config/remote-studio/remote-studio.conf"
+    run bash "$SCRIPT" config set TESTKEY first
+    [ "$status" -eq 0 ]
+    run bash "$SCRIPT" config set TESTKEY second
+    [ "$status" -eq 0 ]
+    [ "$(grep -c "^TESTKEY=" "$user_config")" -eq 1 ]
+    run bash "$SCRIPT" config get TESTKEY
+    [ "$output" = "second" ]
+}
+
+@test "config set value containing = round-trips correctly" {
+    run bash "$SCRIPT" config set TESTKEY2 "a=b"
+    [ "$status" -eq 0 ]
+    run bash "$SCRIPT" config get TESTKEY2
+    [ "$status" -eq 0 ]
+    [ "$output" = "a=b" ]
+}
+
+@test "config set value containing / round-trips correctly" {
+    run bash "$SCRIPT" config set TESTKEY3 "foo/bar"
+    [ "$status" -eq 0 ]
+    run bash "$SCRIPT" config get TESTKEY3
+    [ "$status" -eq 0 ]
+    [ "$output" = "foo/bar" ]
+}
+
+@test "config set missing args exits non-zero" {
+    run bash "$SCRIPT" config set
+    [ "$status" -ne 0 ]
+}
+
+@test "config get missing key returns empty output" {
+    # show_config get pipes through tail+cut which exit 0 even when grep finds
+    # nothing, so the exit status is 0 for unknown keys; only the output is empty.
+    run bash "$SCRIPT" config get NONEXISTENT_KEY_XYZ
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
