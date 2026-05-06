@@ -23,15 +23,10 @@ PKG_DIR="$ROOT_DIR/dist/${PACKAGE}_${VERSION}_${ARCH}"
 DEB_OUT="$ROOT_DIR/dist/${PACKAGE}_${VERSION}_${ARCH}.deb"
 
 # ---------------------------------------------------------------------------
-# Maintainer — prefer git config, fall back to a generic value
+# Maintainer — use GitHub noreply address to avoid embedding personal email
+# in distributed .deb packages
 # ---------------------------------------------------------------------------
-GIT_NAME="$(git -C "$ROOT_DIR" config user.name 2>/dev/null || true)"
-GIT_EMAIL="$(git -C "$ROOT_DIR" config user.email 2>/dev/null || true)"
-if [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; then
-    MAINTAINER="$GIT_NAME <$GIT_EMAIL>"
-else
-    MAINTAINER="Remote Studio <remote-studio>"
-fi
+MAINTAINER="Nico Mancinelli <nicomancinelli@users.noreply.github.com>"
 
 echo "Building ${PACKAGE} ${VERSION} (${ARCH})"
 echo "  Maintainer : $MAINTAINER"

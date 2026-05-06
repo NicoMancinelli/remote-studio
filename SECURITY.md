@@ -8,7 +8,10 @@ Only the latest tagged release receives security updates.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Email Nico Mancinelli at `nicomancinelli@gmail.com` with:
+Use GitHub's private vulnerability reporting:
+**[Report a vulnerability →](https://github.com/NicoMancinelli/remote-studio/security/advisories/new)**
+
+Please include:
 
 - A description of the vulnerability
 - Steps to reproduce
