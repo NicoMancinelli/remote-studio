@@ -8,7 +8,7 @@ IFS=$'\n\t'
 VERSION="8.1"
 
 # ---- Resolve script root and library directory ----
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [ -d "$ROOT_DIR/lib" ]; then
     LIB_DIR="$ROOT_DIR/lib"
 elif [ -d "/usr/share/remote-studio/lib" ]; then
