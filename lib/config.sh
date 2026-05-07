@@ -12,7 +12,7 @@ show_config() {
             ;;
         get)
             [ -z "${2:-}" ] && { echo "Usage: res config get KEY"; return 1; }
-            grep "^${2}=" "$USER_CONFIG" 2>/dev/null | tail -1 | cut -d'=' -f2- || echo "(not set)"
+            grep "^${2}=" "$USER_CONFIG" 2>/dev/null | tail -1 | cut -d'=' -f2- || printf ""
             ;;
         set)
             { [ -z "${2:-}" ] || [ -z "${3:-}" ]; } && { echo "Usage: res config set KEY VALUE"; return 1; }
@@ -87,12 +87,12 @@ show_init_wizard() {
 show_help() {
     echo "Remote Studio - RustDesk display management"
     echo "Usage: res [command]"
-    echo ""; echo "Device Profiles:"
+    printf ""; echo "Device Profiles:"
     for key in $(sorted_profile_keys); do
         IFS='|' read -r label width height scaling _ _ <<< "${PROFILES[$key]}"
         printf "  %-12s %s (%dx%d @%sx)\n" "$key" "$label" "$width" "$height" "$scaling"
     done
-    echo ""; echo "Actions:"
+    printf ""; echo "Actions:"
     echo "  speed, theme, night, caf, privacy, fix, reset, service, audio, keys"
     echo "  doctor, doctor-fix, self-test, init"
     echo "  tailnet, tailnet peer <name>, tailnet hosts, tailnet doctor"

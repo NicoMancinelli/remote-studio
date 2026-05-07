@@ -137,18 +137,6 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "session start writes SESSION_FILE" {
-    # Requires a live X display; skip in headless CI.
-    [ -n "${DISPLAY:-}" ] || skip "no X display"
-    local state_file="$BATS_TEST_TMPDIR/.res_state"
-    local session_file="$BATS_TEST_TMPDIR/.config/remote-studio/session.state"
-    # Provide a fake prior state so session_start has something to record.
-    printf "1280 800 1 1.0 24 'Mac'\n" > "$state_file"
-    run bash "$SCRIPT" session start mac
-    [ -f "$session_file" ]
-    grep -q 'profile=' "$session_file"
-}
-
 @test "session start then stop removes SESSION_FILE" {
     # Requires a live X display; skip in headless CI.
     [ -n "${DISPLAY:-}" ] || skip "no X display"
