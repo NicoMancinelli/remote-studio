@@ -3,7 +3,7 @@
 # Remote Studio — entrypoint
 # ==============================================================================
 set -uo pipefail
-IFS=$'\n\t'
+IFS=$' \n\t'
 
 VERSION="8.1"
 

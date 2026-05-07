@@ -1,6 +1,8 @@
 #!/bin/bash
 # Remote Studio — whiptail TUI panels and text-mode menu
 
+# ---- Helpers ----
+
 tui_header() {
     local mode res_str ip wdata wcount wmsg renderer rustdesk_st session_st
     mode=$(get_current_mode)
@@ -10,10 +12,34 @@ tui_header() {
     renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
     rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
     session_st="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
-    printf 'Mode: %s (%s)  |  IP: %s  |  Session: %s\nRustDesk: %s  |  Renderer: %s  |  Warnings: %s' \
-        "$mode" "$res_str" "${ip:-none}" "$session_st" \
-        "$rustdesk_st" "$renderer" \
-        "$wcount$([ "$wcount" -gt 0 ] && printf ' (%s)' "$wmsg" || true)"
+    
+    # ANSI colors for text menu
+    local c_mode="${GREEN}${mode}${NC}"
+    local c_ip="${CYAN}${ip:-none}${NC}"
+    local c_session="${DIM}${session_st}${NC}"
+    [ "$session_st" = "active" ] && c_session="${GREEN}active${NC}"
+    local c_rd="${GREEN}${rustdesk_st}${NC}"
+    [ "$rustdesk_st" != "active" ] && c_rd="${RED}${rustdesk_st}${NC}"
+    local c_warn="${DIM}0${NC}"
+    [ "$wcount" -gt 0 ] && c_warn="${RED}${wcount} (${wmsg})${NC}"
+
+    printf '  Mode: %-28b | IP: %-25b | Session: %b\n' "$c_mode" "$c_ip" "$c_session"
+    printf '  GPU:  %-28b | RD: %-25b | Warnings: %b' "$renderer" "$c_rd" "$c_warn"
+}
+
+# Centered header for whiptail menus
+tui_title_header() {
+    local mode res_str ip wdata wcount wmsg renderer rustdesk_st session_st
+    mode=$(get_current_mode)
+    res_str=$(get_current_resolution)
+    ip=$(get_tailnet_ip)
+    wdata=$(get_warning_summary_cached); wcount=${wdata%%|*}; wmsg=${wdata#*|}
+    renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
+    rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
+    session_st="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
+
+    printf 'Device: %s (%s)  |  IP: %s\nSession: %s  |  Renderer: %s  |  Warnings: %s' \
+        "$mode" "$res_str" "${ip:-none}" "$session_st" "$renderer" "$wcount"
 }
 
 run_panel_command() {
@@ -28,7 +54,10 @@ run_panel_command() {
     whiptail --title "$title" --scrolltext --textbox "$tmp" "$lines" "$cols"
     rm -f "$tmp"
 }
+
 confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
+
+# ---- Panels ----
 
 tui_quick() {
     local choice def_label
@@ -36,6 +65,7 @@ tui_quick() {
     [ -z "$def_label" ] && def_label="$DEFAULT_PROFILE"
     while true; do
         choice=$(whiptail --title "Quick Actions" \
+            --backtitle "$(tui_title_header)" \
             --menu "Common workflows (default: ${def_label}):" \
             22 84 10 \
             "default-quality"  "Start ${def_label} session + apply Quality preset" \
@@ -50,27 +80,21 @@ tui_quick() {
             back) return 0 ;;
             default-quality)
                 session_start "$DEFAULT_PROFILE" && show_rustdesk apply quality
-                whiptail --msgbox "${def_label} session started with Quality preset." 7 62
                 ;;
             default-balanced)
                 session_start "$DEFAULT_PROFILE" && show_rustdesk apply balanced
-                whiptail --msgbox "${def_label} session started with Balanced preset." 7 64
                 ;;
             default-speed)
                 session_start "$DEFAULT_PROFILE" && show_rustdesk apply speed
-                whiptail --msgbox "${def_label} session started with Speed preset." 7 62
                 ;;
             ipad-balanced)
                 session_start ipad && show_rustdesk apply balanced
-                whiptail --msgbox "iPad session started with Balanced preset." 7 60
                 ;;
             stop-reset)
                 session_stop && do_action reset
-                whiptail --msgbox "Session stopped, display reset." 7 55
                 ;;
             fix-and-restart)
                 do_action fix && do_action service
-                whiptail --msgbox "Fixed clipboard/audio/keys, RustDesk restarted." 7 65
                 ;;
         esac
     done
@@ -91,42 +115,40 @@ tui_dashboard() {
         rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "unknown")
         tailscale_st=$(systemctl is-active tailscaled 2>/dev/null || echo "unknown")
         session_info="$([ -f "$SESSION_FILE" ] && grep '^profile=' "$SESSION_FILE" | cut -d= -f2 || echo "none")"
-        body="Remote Studio v${VERSION}
-
-DISPLAY
+        
+        body="[ DISPLAY ]
   Mode:        ${mode} (${res_str})
   Renderer:    ${renderer}
-  Speed:${S_ST}  Caffeine:${C_ST}  Theme:${T_ST}  Night:${N_ST}
+  Toggles:     Speed:${S_ST} | Caffeine:${C_ST} | Theme:${T_ST} | Night:${N_ST}
 
-SESSION
+[ SESSION ]
   Active:      ${session_info}
-  Users:       ${USERS} connected  (${RUSTDESK_CONN_TYPE:-N/A})
+  Users:       ${USERS} connected ($RUSTDESK_CONN_TYPE)
 
-NETWORK
-  IP:          ${IP_ADDR}
-  Latency:     ${PING_STAT}   Temp: ${THERMAL_ALERT}${TEMP}   RAM: ${RAM}
+[ SYSTEM ]
+  IP Address:  ${IP_ADDR}
+  Telemetry:   Latency:${PING_STAT} | Temp:${TEMP} | RAM:${RAM}
+  Services:    RustDesk:${rustdesk_st} | Tailscale:${tailscale_st}"
 
-SERVICES
-  RustDesk:    ${rustdesk_st}
-  Tailscale:   ${tailscale_st}"
         recent_log=""
         if [ -f "$LOG_FILE" ]; then
-            recent_log=$(tail -n 3 "$LOG_FILE" 2>/dev/null | sed 's/^/  /')
+            recent_log=$(tail -n 4 "$LOG_FILE" 2>/dev/null | sed 's/^/  /')
         fi
         [ -n "$recent_log" ] && body="${body}
 
-RECENT EVENTS
+[ RECENT EVENTS ]
 ${recent_log}"
+
         local _exit
-        timeout 15 whiptail --title "Dashboard — auto-refresh in 15s (Remote Studio v${VERSION})" \
+        timeout 15 whiptail --title "Remote Studio Dashboard (v${VERSION})" \
+            --backtitle "Auto-refreshing every 15 seconds" \
             --yes-button "Refresh" --no-button "Close" \
             --yesno "$body" "$lines" "$cols"
         _exit=$?
         if [ "$_exit" -eq 0 ] || [ "$_exit" -eq 124 ]; then
-            # Refresh clicked (0) or 15s auto-refresh timeout (124) — redraw
             _WARN_CACHE=""
         else
-            return 0  # Close (1) or Escape (255)
+            return 0
         fi
     done
 }
@@ -176,34 +198,49 @@ tui_profiles() {
         local entries=() key label w h s src marker recent_keys recent_count=0 rk
         current=$(get_current_mode)
         recent_keys=$(get_recent_profiles)
+        
         if [ -n "$recent_keys" ]; then
             while IFS= read -r rk; do
                 [ -z "$rk" ] && continue
-                [ -z "${PROFILES[$rk]+x}" ] && continue  # profile no longer exists
+                [ -z "${PROFILES[$rk]+x}" ] && continue
                 IFS='|' read -r label w h s _ _ <<< "${PROFILES[$rk]}"
-                marker=""; [ "$label" = "$current" ] && marker="✓ "
-                entries+=("$rk" "★ ${marker}${label} ${w}x${h}")
+                marker="  "; [ "$label" = "$current" ] && marker="✓ "
+                entries+=("$rk" "★ ${marker}${label} (${w}x${h})")
                 recent_count=$((recent_count + 1))
             done <<< "$recent_keys"
-            [ "$recent_count" -gt 0 ] && entries+=("" "─── all profiles ───")
+            [ "$recent_count" -gt 0 ] && entries+=("" "──────────────── all profiles ────────────────")
         fi
+
         for key in $(sorted_profile_keys); do
             IFS='|' read -r label w h s _ _ <<< "${PROFILES[$key]}"
-            if [ -f "$USER_PROFILES" ] && grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null; then
-                src="[user]"
-            else
-                src="[built-in]"
-            fi
-            marker=""; [ "$label" = "$current" ] && marker="✓ "
-            entries+=("$key" "${marker}${label} ${w}x${h} x${s} ${src}")
+            src="[built-in]"
+            grep -q "^${key}=" "$USER_PROFILES" 2>/dev/null && src="[user]"
+            marker="  "; [ "$label" = "$current" ] && marker="✓ "
+            
+            # Icon based on key prefix
+            local icon="  "
+            case "$key" in
+                mac*) icon="💻" ;;
+                ipad*) icon="📱" ;;
+                iphone*) icon="📱" ;;
+                *) icon="🖥️ " ;;
+            esac
+            
+            entries+=("$key" "${icon} ${marker}${label} (${w}x${h} @${s}x) ${src}")
         done
-        entries+=("custom"  "  Enter arbitrary resolution")
-        entries+=("manage"  "  Manage user profiles")
-        entries+=("back"    "  Return to Main Menu")
-        choice=$(whiptail --title "Profiles" --backtitle "Active: $current" \
-            --menu "Select a profile to apply:" 24 90 18 "${entries[@]}" \
+        
+        entries+=("" "──────────────── actions ────────────────")
+        entries+=("custom"  "  + Create Custom Resolution")
+        entries+=("manage"  "  ⚙ Manage User Profiles")
+        entries+=("back"    "  ↩ Return to Main Menu")
+        
+        choice=$(whiptail --title "Display Profiles" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Select a profile to apply to the current session:" \
+            24 90 18 "${entries[@]}" \
             3>&1 1>&2 2>&3) || return 0
-        [ -z "$choice" ] && continue  # ignore the divider line
+        
+        [ -z "$choice" ] && continue
         case "$choice" in
             back)   return 0 ;;
             custom) tui_custom_resolution ;;
@@ -211,8 +248,7 @@ tui_profiles() {
             *)
                 if apply_profile "$choice"; then
                     record_recent_profile "$choice"
-                    IFS='|' read -r label _ <<< "${PROFILES[$choice]}"
-                    whiptail --msgbox "Applied: $label" 7 50
+                    return 0
                 else
                     whiptail --msgbox "Failed to apply profile '$choice'." 7 50
                 fi
@@ -364,17 +400,18 @@ tui_performance() {
         get_toggle_states
         current_rotation=$(xrandr 2>/dev/null | grep " connected" | grep -o "normal\|left\|right\|inverted" | head -1 || echo "normal")
         choice=$(whiptail --title "Performance & Session" \
-            --menu "Session: $([ -f "$SESSION_FILE" ] && grep '^profile=' "$SESSION_FILE" | cut -d= -f2 || echo idle)" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Manage session state and comfort toggles:" \
             24 86 10 \
-            "session-start" "Start Session (choose profile)" \
-            "session-stop"  "Stop Session & Restore State" \
+            "session-start" "Start New Session (apply profile)" \
+            "session-stop"  "Stop Session (restore previous state)" \
             "speed"         "Toggle Speed Mode         [$S_ST]" \
             "caf"           "Toggle Caffeine           [$C_ST]" \
             "theme"         "Toggle Theme              [$T_ST]" \
             "night"         "Toggle Night Shift        [$N_ST]" \
             "rotate"        "Rotate Display            [$current_rotation]" \
-            "privacy"       "Lock Screen & Blank Monitor" \
-            "fix"           "Fix Clipboard / Audio / Keys" \
+            "privacy"       "Privacy Lock (Blank Monitor)" \
+            "fix"           "Repair Toolkit (Clip/Audio/Keys)" \
             "back"          "Main Menu" \
             3>&1 1>&2 2>&3) || return 0
         case "$choice" in
@@ -386,16 +423,12 @@ tui_performance() {
                     p_entries+=("$key" "$label ${w}x${h}")
                 done
                 profile=$(whiptail --title "Start Session" \
-                    --menu "Select profile for this session:" \
+                    --menu "Select profile to apply:" \
                     20 70 10 "${p_entries[@]}" \
                     3>&1 1>&2 2>&3) || continue
                 session_start "$profile"
-                whiptail --msgbox "Session started: $profile" 7 50
                 ;;
-            session-stop)
-                session_stop
-                whiptail --msgbox "Session stopped. State restored." 7 50
-                ;;
+            session-stop) session_stop ;;
             rotate)
                 local rot_choice
                 rot_choice=$(whiptail --title "Rotate Display" \
@@ -416,8 +449,9 @@ tui_performance() {
 tui_tailnet() {
     local choice n
     while true; do
-        choice=$(whiptail --title "Tailnet" \
-            --menu "Tailscale network tools:" \
+        choice=$(whiptail --title "Tailnet Tools" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Tailscale network management:" \
             20 72 8 \
             "address"   "Show Tailscale IP & RustDesk Direct" \
             "hosts"     "List All Tailnet Peers" \
@@ -447,35 +481,28 @@ tui_tailnet() {
 tui_diagnostics() {
     local choice n
     while true; do
-        choice=$(whiptail --title "Diagnostics" \
-            --menu "Inspect system health:" \
+        choice=$(whiptail --title "Diagnostics & Health" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Inspect system health and network connectivity:" \
             24 88 10 \
-            "doctor"          "Full Health Report" \
-            "self-test"       "Automated Self-Test (9 checks)" \
-            "fix-all"         "Auto-Repair Issues" \
-            "tailnet"         "Tailscale Tools" \
-            "rustdesk-status" "RustDesk Session Status" \
-            "profiles"        "List All Profiles (with source)" \
-            "watch-status"    "Session / Watcher State" \
-            "log"             "Event Log Viewer" \
-            "back"            "Main Menu" \
+            "doctor"          "🩺 Full Health Report" \
+            "self-test"       "🧪 Automated Integration Test" \
+            "log"             "📜 View Event Logs" \
+            "tailnet"         "🌐 Tailscale Network Tools" \
+            "rustdesk-status" "📡 RustDesk Connection Details" \
+            "profiles-list"   "📋 List Defined Profiles" \
+            "fix-all"         "🛠️ Run Automated Repair" \
+            "back"            "↩ Return to Main Menu" \
             3>&1 1>&2 2>&3) || return 0
         case "$choice" in
             back)             return 0 ;;
             doctor)           run_panel_command "Doctor" show_doctor ;;
             self-test)        run_panel_command "Self-Test" show_self_test ;;
-            fix-all)          run_panel_command "Repair" doctor_fix ;;
+            log)              tui_log_viewer ;;
             tailnet)          tui_tailnet ;;
             rustdesk-status)  run_panel_command "RustDesk Status" show_rustdesk status ;;
-            profiles)         run_panel_command "Profiles" show_profiles_list ;;
-            watch-status)
-                if [ -f "$SESSION_FILE" ]; then
-                    run_panel_command "Session State" cat "$SESSION_FILE"
-                else
-                    whiptail --msgbox "No active session state." 7 50
-                fi
-                ;;
-            log)              tui_log_viewer ;;
+            profiles-list)    run_panel_command "Profile Registry" show_profiles_list ;;
+            fix-all)          run_panel_command "Repair" doctor_fix ;;
         esac
     done
 }
@@ -483,8 +510,9 @@ tui_diagnostics() {
 tui_rustdesk() {
     local choice
     while true; do
-        choice=$(whiptail --title "RustDesk" \
-            --menu "Config, presets, and service:" \
+        choice=$(whiptail --title "RustDesk Tools" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Config, presets, and service management:" \
             22 88 10 \
             "status"         "Session Status (codec / FPS)" \
             "log"            "Service Log (50 lines)" \
@@ -511,73 +539,72 @@ tui_rustdesk() {
 tui_system() {
     local choice
     while true; do
-        choice=$(whiptail --title "System & Tools" \
-            --menu "Installation, Xorg, and maintenance:" \
+        choice=$(whiptail --title "System & Maintenance" \
+            --backtitle "$(tui_title_header)" \
+            --menu "Internal configuration and Xorg management:" \
             24 88 12 \
-            "rustdesk"      "RustDesk Tools" \
-            "config"        "Configuration" \
-            "watch-service" "Watch Service (auto-session on connect)" \
-            "update"        "Update Remote Studio (git pull)" \
-            "xorg-preview"  "Preview Generated Xorg Config" \
-            "xorg-write"    "Write /etc/X11/xorg.conf (sudo)" \
-            "xorg-rollback" "Rollback /etc/X11/xorg.conf" \
-            "install"       "Re-run User Install" \
-            "backup"        "Full Config Backup" \
-            "reset"         "Reset Display (1024x768)" \
-            "back"          "Main Menu" \
+            "rustdesk"      "📡 RustDesk Tools & Presets" \
+            "config"        "⚙️ Remote Studio Configuration" \
+            "watch-service" "👁️ Connection Watcher Service" \
+            "xorg-mgmt"     "🖥️ Xorg Config Management" \
+            "update"        "🔄 Self-Update (git pull)" \
+            "install"       "📦 Re-run Installer" \
+            "backup"        "💾 System Backup" \
+            "reset"         "🆘 Emergency Display Reset" \
+            "back"          "↩ Return to Main Menu" \
             3>&1 1>&2 2>&3) || return 0
         case "$choice" in
             back)          return 0 ;;
             rustdesk)      tui_rustdesk ;;
             config)        tui_config ;;
-            watch-service)
-                local ws_choice ws_st
-                ws_st=$(systemctl --user is-active remote-studio-watch 2>/dev/null || echo "inactive")
-                ws_choice=$(whiptail --title "Watch Service" \
-                    --menu "Auto-applies profile when RustDesk connects  [${ws_st}]" \
-                    14 68 5 \
-                    "status"  "Show Service Status" \
-                    "enable"  "Enable & Start" \
-                    "disable" "Stop & Disable" \
-                    "log"     "View Journal (last 50 lines)" \
-                    "back"    "Return" \
-                    3>&1 1>&2 2>&3) || continue
-                case "$ws_choice" in
-                    status)
-                        run_panel_command "Watch Service Status" systemctl --user status remote-studio-watch
-                        ;;
-                    enable)
-                        confirm_action "Enable and start remote-studio-watch service?" && \
-                            run_panel_command "Enable Watch Service" bash -c \
-                                "systemctl --user enable remote-studio-watch && systemctl --user start remote-studio-watch"
-                        ;;
-                    disable)
-                        confirm_action "Stop and disable remote-studio-watch service?" && \
-                            run_panel_command "Disable Watch Service" bash -c \
-                                "systemctl --user stop remote-studio-watch; systemctl --user disable remote-studio-watch"
-                        ;;
-                    log)
-                        run_panel_command "Watch Service Log" \
-                            journalctl --user -u remote-studio-watch -n 50 --no-pager
-                        ;;
-                esac
-                ;;
-            update)
-                confirm_action "Pull latest from git and reinstall?" && \
-                    run_panel_command "Update" show_update
-                ;;
-            xorg-preview)  run_panel_command "Xorg Config Preview" generate_xorg ;;
-            xorg-write)
-                confirm_action "Write generated Xorg config to /etc/X11/xorg.conf?\n(Requires sudo. Restart LightDM to apply.)" && \
-                    run_panel_command "Write Xorg" "$ROOT_DIR/install.sh" system
-                ;;
-            xorg-rollback)
-                confirm_action "Restore /etc/X11/xorg.conf from latest backup?" && \
-                    run_panel_command "Xorg Rollback" rollback_xorg
-                ;;
-            install)  run_panel_command "Install" "$ROOT_DIR/install.sh" install ;;
-            backup)   run_panel_command "Backup" "$ROOT_DIR/install.sh" backup ;;
-            reset)    do_action reset ;;
+            watch-service) tui_watch_service ;;
+            xorg-mgmt)     tui_xorg_mgmt ;;
+            update)        run_panel_command "Update" show_update ;;
+            install)       run_panel_command "Install" "$ROOT_DIR/install.sh" install ;;
+            backup)        run_panel_command "Backup" "$ROOT_DIR/install.sh" backup ;;
+            reset)         do_action reset ;;
+        esac
+    done
+}
+
+tui_watch_service() {
+    local ws_choice ws_st
+    while true; do
+        ws_st=$(systemctl --user is-active remote-studio-watch 2>/dev/null || echo "inactive")
+        ws_choice=$(whiptail --title "Watch Service" \
+            --menu "Auto-applies profile when RustDesk connects  [${ws_st}]" \
+            16 70 6 \
+            "status"  "Show Service Status" \
+            "enable"  "Enable & Start" \
+            "disable" "Stop & Disable" \
+            "log"     "View Journal (last 50 lines)" \
+            "back"    "Return" \
+            3>&1 1>&2 2>&3) || return 0
+        case "$ws_choice" in
+            back) return 0 ;;
+            status) run_panel_command "Watch Status" systemctl --user status remote-studio-watch ;;
+            enable) confirm_action "Enable watcher?" && { systemctl --user enable remote-studio-watch; systemctl --user start remote-studio-watch; } ;;
+            disable) confirm_action "Disable watcher?" && { systemctl --user stop remote-studio-watch; systemctl --user disable remote-studio-watch; } ;;
+            log) run_panel_command "Watch Log" journalctl --user -u remote-studio-watch -n 50 --no-pager ;;
+        esac
+    done
+}
+
+tui_xorg_mgmt() {
+    local choice
+    while true; do
+        choice=$(whiptail --title "Xorg Management" \
+            --menu "Configure GPU-backed virtual displays:" 16 70 5 \
+            "preview"  "Preview Generated Config" \
+            "write"    "Write to /etc/X11/xorg.conf (sudo)" \
+            "rollback" "Restore Latest Backup" \
+            "back"     "Return" \
+            3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            preview) run_panel_command "Xorg Preview" generate_xorg ;;
+            write) confirm_action "Overwrite /etc/X11/xorg.conf? (Requires sudo)" && run_panel_command "Xorg Write" "$ROOT_DIR/install.sh" system ;;
+            rollback) confirm_action "Restore Xorg from backup?" && run_panel_command "Xorg Rollback" rollback_xorg ;;
         esac
     done
 }
@@ -586,16 +613,19 @@ show_text_menu() {
     local choice
     while true; do
         clear
-        echo -e "${CYAN}=== Remote Studio v${VERSION} ===${NC}"
+        echo -e "${CYAN}┌────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${CYAN}│${NC}           ${WHITE}${BOLD}Remote Studio v${VERSION}${NC}           ${CYAN}│${NC}"
+        echo -e "${CYAN}└────────────────────────────────────────────────────────────┘${NC}"
         tui_header
+        echo -e "\n${DIM}──────────────────────────────────────────────────────────────${NC}"
+        printf "  ${CYAN}1)${NC} Profiles         ${CYAN}4)${NC} System\n"
+        printf "  ${CYAN}2)${NC} Performance      ${CYAN}5)${NC} Dashboard\n"
+        printf "  ${CYAN}3)${NC} Diagnostics      ${CYAN}6)${NC} Tailnet\n"
+        printf "  ${CYAN}7)${NC} Quick Actions    ${CYAN}8)${NC} Help\n"
+        printf "  ${CYAN}0)${NC} Exit\n"
+        echo -e "${DIM}──────────────────────────────────────────────────────────────${NC}"
         echo ""
-        echo "  1) Profiles       4) System"
-        echo "  2) Performance    5) Dashboard"
-        echo "  3) Diagnostics    6) Tailnet"
-        echo "  7) Quick Actions  8) Help"
-        echo "  0) Exit"
-        echo ""
-        read -r -p "Select: " choice
+        read -r -p "Selection: " choice
         case "$choice" in
             1) tui_profiles ;;
             2) tui_performance ;;
@@ -606,6 +636,7 @@ show_text_menu() {
             7) tui_quick ;;
             8) show_help | "${PAGER:-less}" ;;
             0|q|Q) exit 0 ;;
+            *) echo -e "${RED}Invalid selection.${NC}"; sleep 1 ;;
         esac
     done
 }

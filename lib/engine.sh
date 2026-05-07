@@ -6,32 +6,59 @@ apply_all() {
     local dpi
     dpi=$(awk "BEGIN { printf \"%d\", 96 * $scaling }")
     OUTPUT=$(xrandr | grep " connected" | head -n 1 | cut -f1 -d" ")
-    [ -z "$OUTPUT" ] && return 1
+    [ -z "$OUTPUT" ] && { echo "Error: no connected display found." >&2; return 1; }
     MODE_NAME=$(mode_name_for "$width" "$height")
 
     # Remove stale modes with same name or resolution
+    local m current_m
+    current_m=$(xrandr | awk '/\*/ {print $1}')
     for m in $(xrandr | awk '{print $1}' | grep -E "^${MODE_NAME}\$|^${width}x${height}(_.*)?$"); do
+        # Never delete the mode we are currently using
+        [ "$m" = "$current_m" ] && continue
+        
         xrandr --delmode "$OUTPUT" "$m" 2>/dev/null || true
         xrandr --rmmode "$m" 2>/dev/null || true
     done
 
+    local MODE_INFO MODE_PARAMS
     MODE_INFO=$(cvt "$width" "$height" 60 | grep Modeline)
-    MODE_PARAMS=$(echo "$MODE_INFO" | cut -d' ' -f3-)
+    # Extract everything after the mode name (the second field in cvt output)
+    MODE_PARAMS=$(echo "$MODE_INFO" | sed -E 's/.*Modeline "[^"]+"[[:space:]]+(.*)/\1/')
+    
+    if [ -z "$MODE_PARAMS" ]; then
+        echo "Error: failed to generate modeline for ${width}x${height}." >&2
+        return 1
+    fi
+
     # shellcheck disable=SC2086
-    xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null || true
+    if ! xrandr --newmode "$MODE_NAME" $MODE_PARAMS 2>/dev/null; then
+        # If it already exists, just continue
+        true
+    fi
+
     local xrandr_err
     xrandr_err=$(xrandr --addmode "$OUTPUT" "$MODE_NAME" 2>&1) || {
-        echo "Error: could not add mode $MODE_NAME: $xrandr_err" >&2
-        return 1
+        # If it was already added, this is fine
+        if [[ ! "$xrandr_err" == *"already exists"* ]]; then
+            echo "Error: could not add mode $MODE_NAME: $xrandr_err" >&2
+            return 1
+        fi
     }
+
     xrandr_err=$(xrandr --output "$OUTPUT" --mode "$MODE_NAME" 2>&1) || {
         echo "Error: could not apply mode $MODE_NAME: $xrandr_err" >&2
         return 1
     }
+
+    # Apply Cinnamon UI scaling
     gsettings set org.cinnamon.desktop.interface scaling-factor "$scaling" 2>/dev/null
     gsettings set org.cinnamon.desktop.interface text-scaling-factor "$text_scale" 2>/dev/null
     gsettings set org.cinnamon.desktop.interface cursor-size "$cursor" 2>/dev/null
+    
+    # Set X11 DPI for non-GTK apps
     echo "Xft.dpi: $dpi" | xrdb -merge
+    
+    # Save state
     echo "$width $height $scaling $text_scale $cursor '$label'" > "$STATE_FILE"
     log_event "Mode: $label"
     return 0
