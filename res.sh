@@ -141,17 +141,30 @@ if ! command -v whiptail >/dev/null 2>&1; then
     show_text_menu
 fi
 
-[ "$(tput lines 2>/dev/null || echo 0)" -lt 18 ] && show_text_menu
+# Calculate dynamic TUI dimensions
+_T_LINES=$(tput lines 2>/dev/null || echo 24)
+_T_COLS=$(tput cols 2>/dev/null || echo 90)
+
+# If terminal is too small, fallback to text menu
+if [ "$_T_LINES" -lt 15 ] || [ "$_T_COLS" -lt 60 ]; then
+    show_text_menu
+fi
+
 while true; do
     _m=$(get_current_mode)
     _r=$(get_current_resolution)
     _t=$(get_tailnet_ip)
     _u=$(ss -tnp 2>/dev/null | grep -ic "rustdesk.*ESTAB" || true)
     _wdata=$(get_warning_summary_cached); _w=${_wdata%%|*}
+    
+    # Adjust whiptail height to fit terminal but cap at 24
+    _W_H=$(( _T_LINES > 24 ? 24 : _T_LINES - 2 ))
+    _W_W=$(( _T_COLS > 92 ? 92 : _T_COLS - 2 ))
+
     choice=$(whiptail \
         --title "Remote Studio v${VERSION}" \
         --backtitle "Mode: $_m ($_r)  |  IP: ${_t:-none}  |  Users: $_u  |  Warnings: $_w" \
-        --menu "$(tui_header)" 24 92 10 \
+        --menu "$(tui_header)" "$_W_H" "$_W_W" 10 \
         "profiles"    "Display Profiles" \
         "quick"       "Quick Actions" \
         "performance" "Session & Toggles" \
