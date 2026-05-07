@@ -107,6 +107,13 @@ install_user() {
         echo "  Skipped  $CONFIG_DIR/profiles.conf (already exists)"
     fi
 
+    if [ ! -f "$CONFIG_DIR/remote-studio.conf" ]; then
+        run install -m 0644 "$ROOT_DIR/config/remote-studio.conf.example" "$CONFIG_DIR/remote-studio.conf"
+        echo "  Copied   $CONFIG_DIR/remote-studio.conf"
+    else
+        echo "  Skipped  $CONFIG_DIR/remote-studio.conf (already exists)"
+    fi
+
     if [ ! -f "$RUSTDESK_DIR/RustDesk_default.toml" ]; then
         run install -m 0600 "$ROOT_DIR/config/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml"
         echo "  Copied   $RUSTDESK_DIR/RustDesk_default.toml"

@@ -206,6 +206,7 @@ remote-studio/
 │   └── metadata.json
 ├── config/
 │   ├── profiles.conf             # Built-in device profiles
+│   ├── remote-studio.conf.example # Local config defaults copied by install.sh
 │   ├── xorg.conf                 # Headless Xorg dummy config template
 │   ├── RustDesk_default.toml     # Default RustDesk display settings
 │   ├── RustDesk_balanced.toml
@@ -236,7 +237,7 @@ User overrides live in `~/.config/remote-studio/`:
 
 | File | Purpose |
 | :--- | :--- |
-| `remote-studio.conf` | Key-value config (`DEFAULT_PROFILE`, `AUTO_SESSION`, etc.) |
+| `remote-studio.conf` | Key-value config copied from [`config/remote-studio.conf.example`](config/remote-studio.conf.example) on first install (`DEFAULT_PROFILE`, `DEFAULT_RUSTDESK_PRESET`, `XORG_DRIVER`, etc.) |
 | `profiles.conf` | Custom device profiles (appended to built-ins) |
 | `session.state` | Active session snapshot (managed by `res session`) |
 | `recent_profiles` | Last 5 used profiles (shown at top of TUI profiles menu) |

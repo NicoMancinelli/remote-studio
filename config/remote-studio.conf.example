@@ -1,0 +1,14 @@
+# Remote Studio local defaults
+#
+# Copy to ~/.config/remote-studio/remote-studio.conf or run:
+#   ./install.sh install
+#
+# Supported keys are whitelisted by res.sh. Values should be plain tokens
+# containing letters, numbers, dots, underscores, dashes, or slashes.
+
+DEFAULT_PROFILE=mac
+DEFAULT_RUSTDESK_PRESET=default
+
+# res xorg uses nvidia by default for GPU-backed remote sessions.
+# Set XORG_DRIVER=dummy only if you intentionally need the Xorg dummy driver.
+XORG_DRIVER=nvidia

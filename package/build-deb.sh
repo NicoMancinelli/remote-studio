@@ -60,6 +60,7 @@ copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/cinnamon/applets/
 
 # Shared data — config templates
 copy_file "$ROOT_DIR/config/profiles.conf"          "$PKG_DIR/usr/share/remote-studio/profiles.conf"          0644
+copy_file "$ROOT_DIR/config/remote-studio.conf.example" "$PKG_DIR/usr/share/remote-studio/remote-studio.conf.example" 0644
 copy_file "$ROOT_DIR/config/RustDesk_default.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_default.toml"  0644
 copy_file "$ROOT_DIR/config/RustDesk_balanced.toml" "$PKG_DIR/usr/share/remote-studio/RustDesk_balanced.toml" 0644
 copy_file "$ROOT_DIR/config/RustDesk_quality.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_quality.toml"  0644
