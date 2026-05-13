@@ -1,6 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `show_update`: changed `exit 1` → `return 1` on git pull failure — `exit` killed the parent
+  shell when invoked from the TUI via `run_panel_command`, making all subsequent TUI navigation
+  impossible after a failed update attempt.
+- `applet.js` `_loadProfiles`: duplicate menu items appeared when a profile key existed in both
+  the default and user `profiles.conf` files. Now deduplicates by key with last-wins semantics
+  (user file overrides default, matching shell-side `PROFILES` associative array behaviour).
+  Insertion order is preserved (default keys first, then user-only additions).
+
 ## [8.1] — 2026-05-02
+
 
 ### Added
 - Cinnamon applet: `Gio.FileMonitor` file-watch replaces 600 ms polling loop (lower CPU)

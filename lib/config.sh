@@ -113,7 +113,7 @@ show_update() {
     echo "Current: v${VERSION} (${before})"
     if ! git -C "$ROOT_DIR" pull --ff-only; then
         echo "Error: git pull failed. Ensure this is a git repo with a clean working tree." >&2
-        exit 1
+        return 1
     fi
     after=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
     "$ROOT_DIR/install.sh" install

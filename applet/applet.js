@@ -183,6 +183,7 @@ MyApplet.prototype = {
     },
 
     _loadProfiles: function() {
+        let seen = {};
         let profiles = [];
         let files = [PROFILES_FILE, USER_PROFILES_FILE];
         files.forEach(file => {
@@ -195,15 +196,36 @@ MyApplet.prototype = {
                             if (line && line.indexOf("=") !== -1 && line.indexOf("#") !== 0) {
                                 let [key, val] = line.split("=");
                                 let [label, w, h, scale] = val.split("|");
-                                profiles.push({ key: key.trim(), label: label.trim(), width: w, height: h, scale: scale });
+                                let k = key.trim();
+                                // Last-wins: user file (processed second) overrides default
+                                seen[k] = { key: k, label: label.trim(), width: w, height: h, scale: scale };
                             }
                         });
                     }
                 }
             } catch(e) {}
         });
+        // Preserve insertion order (default keys first, then user-only additions)
+        let order = [];
+        files.forEach(file => {
+            try {
+                if (GLib.file_test(file, GLib.FileTest.EXISTS)) {
+                    let [res, contents] = GLib.file_get_contents(file);
+                    if (res) {
+                        contents.toString().split("\n").forEach(line => {
+                            if (line && line.indexOf("=") !== -1 && line.indexOf("#") !== 0) {
+                                let k = line.split("=")[0].trim();
+                                if (order.indexOf(k) === -1) order.push(k);
+                            }
+                        });
+                    }
+                }
+            } catch(e) {}
+        });
+        order.forEach(k => { if (seen[k]) profiles.push(seen[k]); });
         return profiles;
     },
+
 
     _buildMenu: function() {
         this.menu.removeAll();
