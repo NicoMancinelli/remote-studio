@@ -55,6 +55,25 @@ get_renderer_summary() {
     [ -n "$renderer" ] && echo "$renderer" || echo "unknown"
 }
 
+# Ping runs in the background; result is cached for 30 s so get_stats never
+# blocks the TUI render loop for the 1 s ping timeout.
+_refresh_ping_cache() {
+    local _tmp
+    _tmp=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
+    _PING_CACHE="$_tmp"
+    _PING_CACHE_TS=$(date +%s)
+}
+
+get_ping_cached() {
+    local now
+    now=$(date +%s)
+    if [ -z "$_PING_CACHE_TS" ] || [ $(( now - _PING_CACHE_TS )) -gt 30 ]; then
+        # Launch in background; first call returns stale/empty until it lands
+        _refresh_ping_cache &
+    fi
+    printf '%s' "$_PING_CACHE"
+}
+
 get_stats() {
     IP_ADDR=$(get_primary_ip)
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
@@ -72,8 +91,8 @@ get_stats() {
         RUSTDESK_CONN_TYPE="None"
     fi
 
-    PING_RAW=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
-    [ -z "$PING_RAW" ] && PING_STAT="Offline" || PING_STAT="${PING_RAW}ms"
+    PING_RAW=$(get_ping_cached)
+    [ -z "$PING_RAW" ] && PING_STAT="…" || PING_STAT="${PING_RAW}ms"
     [[ "${TEMP%.*}" -gt 80 ]] 2>/dev/null && THERMAL_ALERT="⚠️ " || THERMAL_ALERT=""
 }
 

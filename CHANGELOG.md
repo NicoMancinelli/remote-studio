@@ -2,14 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+- `applet.js`: collapsible submenu groups — **Device Presets**, **Performance & Session**,
+  **RustDesk**, **System & Security** — replace the flat item list, greatly condensing the
+  panel menu. Groups remember their open/closed state for the lifetime of the Cinnamon session.
+- `applet.js`: "smart expand" — the Device Presets group auto-opens whenever the current mode
+  matches a known profile, so the active checkmark is always immediately visible.
+- `applet.js`: reads `DEFAULT_PROFILE` from `~/.config/remote-studio/remote-studio.conf` at
+  menu-open time; the **Start Session** item now reflects the real default instead of hardcoding `mac`.
+- `lib/core.sh`: `get_ping_cached` / `_refresh_ping_cache` — ping is now non-blocking. The
+  result is cached for 30 s and refreshed in the background, eliminating the ≤1 s stall that
+  `ping -W 1` caused on every `get_stats` call (dashboard render, `res status`, etc.). While
+  the cache is cold the dashboard shows `…` instead of blocking.
+- `lib/tui.sh`: `_tui_collect_state` helper — eliminates the 8-line duplication between
+  `tui_header` and `tui_title_header`.
+
 ### Fixed
 - `show_update`: changed `exit 1` → `return 1` on git pull failure — `exit` killed the parent
-  shell when invoked from the TUI via `run_panel_command`, making all subsequent TUI navigation
-  impossible after a failed update attempt.
+  shell when invoked from the TUI via `run_panel_command`.
 - `applet.js` `_loadProfiles`: duplicate menu items appeared when a profile key existed in both
-  the default and user `profiles.conf` files. Now deduplicates by key with last-wins semantics
-  (user file overrides default, matching shell-side `PROFILES` associative array behaviour).
-  Insertion order is preserved (default keys first, then user-only additions).
+  the default and user `profiles.conf` files. Now deduplicates by key (last-wins, user overrides
+  default), preserving insertion order.
+
+### Changed
+- `applet.js`: migrated all `Mainloop.*` calls to `GLib.*` equivalents (`GLib.timeout_add_seconds`,
+  `GLib.source_remove`, `GLib.timeout_add`) — `Mainloop` is deprecated in Cinnamon 5.4+.
+- `applet.js`: `_addMenuItem` / `_addTerminalItem` replaced by `_subItem` / `_subTerminal` /
+  `_subSep` helpers that operate on a submenu group rather than the root menu.
 
 ## [8.1] — 2026-05-02
 

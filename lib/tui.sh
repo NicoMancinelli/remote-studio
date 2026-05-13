@@ -3,43 +3,40 @@
 
 # ---- Helpers ----
 
+# ---- Shared state collector (used by both tui_header and tui_title_header) ----
+
+_tui_collect_state() {
+    _tui_mode=$(get_current_mode)
+    _tui_res=$(get_current_resolution)
+    _tui_ip=$(get_tailnet_ip)
+    local wdata; wdata=$(get_warning_summary_cached)
+    _tui_wcount=${wdata%%|*}
+    _tui_wmsg=${wdata#*|}
+    _tui_renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
+    _tui_rdst=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
+    _tui_session="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
+}
+
 tui_header() {
-    local mode res_str ip wdata wcount wmsg renderer rustdesk_st session_st
-    mode=$(get_current_mode)
-    res_str=$(get_current_resolution)
-    ip=$(get_tailnet_ip)
-    wdata=$(get_warning_summary_cached); wcount=${wdata%%|*}; wmsg=${wdata#*|}
-    renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
-    rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
-    session_st="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
-    
-    # ANSI colors for text menu
-    local c_mode="${GREEN}${mode}${NC}"
-    local c_ip="${CYAN}${ip:-none}${NC}"
-    local c_session="${DIM}${session_st}${NC}"
-    [ "$session_st" = "active" ] && c_session="${GREEN}active${NC}"
-    local c_rd="${GREEN}${rustdesk_st}${NC}"
-    [ "$rustdesk_st" != "active" ] && c_rd="${RED}${rustdesk_st}${NC}"
+    _tui_collect_state
+    local c_mode="${GREEN}${_tui_mode}${NC}"
+    local c_ip="${CYAN}${_tui_ip:-none}${NC}"
+    local c_session="${DIM}${_tui_session}${NC}"
+    [ "$_tui_session" = "active" ] && c_session="${GREEN}active${NC}"
+    local c_rd="${GREEN}${_tui_rdst}${NC}"
+    [ "$_tui_rdst" != "active" ] && c_rd="${RED}${_tui_rdst}${NC}"
     local c_warn="${DIM}0${NC}"
-    [ "$wcount" -gt 0 ] && c_warn="${RED}${wcount} (${wmsg})${NC}"
+    [ "$_tui_wcount" -gt 0 ] && c_warn="${RED}${_tui_wcount} (${_tui_wmsg})${NC}"
 
     printf '  Mode: %-28b | IP: %-25b | Session: %b\n' "$c_mode" "$c_ip" "$c_session"
-    printf '  GPU:  %-28b | RD: %-25b | Warnings: %b' "$renderer" "$c_rd" "$c_warn"
+    printf '  GPU:  %-28b | RD: %-25b | Warnings: %b' "$_tui_renderer" "$c_rd" "$c_warn"
 }
 
 # Centered header for whiptail menus
 tui_title_header() {
-    local mode res_str ip wdata wcount wmsg renderer rustdesk_st session_st
-    mode=$(get_current_mode)
-    res_str=$(get_current_resolution)
-    ip=$(get_tailnet_ip)
-    wdata=$(get_warning_summary_cached); wcount=${wdata%%|*}; wmsg=${wdata#*|}
-    renderer=$(get_renderer_summary 2>/dev/null | sed 's/.*NVIDIA.*/NVIDIA/;s/.*AMD.*/AMD/;s/.*Intel.*/Intel/;s/.*llvmpipe.*/SW-render/')
-    rustdesk_st=$(systemctl is-active rustdesk 2>/dev/null || echo "?")
-    session_st="$([ -f "$SESSION_FILE" ] && echo "active" || echo "idle")"
-
+    _tui_collect_state
     printf 'Device: %s (%s)  |  IP: %s\nSession: %s  |  Renderer: %s  |  Warnings: %s' \
-        "$mode" "$res_str" "${ip:-none}" "$session_st" "$renderer" "$wcount"
+        "$_tui_mode" "$_tui_res" "${_tui_ip:-none}" "$_tui_session" "$_tui_renderer" "$_tui_wcount"
 }
 
 run_panel_command() {
