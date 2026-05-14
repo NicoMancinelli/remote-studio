@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [8.2] — 2026-05-14
 
 ### Added
 - `lib/core.sh`: `get_ping_cached` / `_refresh_ping_cache` — ping is now non-blocking.

@@ -5,7 +5,7 @@
 set -uo pipefail
 IFS=$' \n\t'
 
-VERSION="8.1"
+VERSION="8.2"
 
 # ---- Resolve script root and library directory ----
 ROOT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
