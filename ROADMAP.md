@@ -86,6 +86,6 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 
 ## Documentation & Screenshots
 
-- 🔴 Capture screenshots of the Cinnamon applet (panel label, open menu, tooltip) and commit them to `docs/screenshots/`.
-- 🔴 Capture `res doctor` terminal output and add it to `docs/screenshots/`.
-- 🔴 Add a `docs/` directory with a quick-start guide for new machines.
+- ✅ Capture screenshots of the Cinnamon applet (panel label, open menu, tooltip) and commit them to `docs/screenshots/`.
+- ✅ Capture `res doctor` terminal output and add it to `docs/screenshots/`.
+- ✅ Add a `docs/` directory with a quick-start guide for new machines.
