@@ -150,6 +150,7 @@ MyApplet.prototype = {
             let users     = parseInt(p[3]) || 0;
             let warnings  = parseInt(p[5]) || 0;
             let connType  = (p[9] || "").trim();
+            let codec     = (p[12] || "").trim();
 
             if (this._notifyEnabled) {
                 if (users > this.lastUserCount)
@@ -164,6 +165,7 @@ MyApplet.prototype = {
             let dot   = users > 0 ? (connType === "Direct" ? "● " : "◐ ") : "";
             let alert = warnings > 0 ? "⚠ " : "";
             let uc    = users > 0 ? " 👥" + users : "";
+            let codecLabel = (users > 0 && codec) ? " [" + codec + "]" : "";
 
             this.set_applet_icon_name(this._iconForMode(label));
             this.set_applet_label(alert + dot + label + uc);
@@ -172,6 +174,7 @@ MyApplet.prototype = {
                 "\nMode: "    + label        +
                 "\nRes: "     + (p[10]||"N/A") +
                 "\nPath: "    + (p[9] ||"N/A") +
+                (codec ? "\nCodec: " + codec : "") +
                 "\nIP: "      + p[8]          +
                 "\nDirect: "  + (p[11]||"N/A") +
                 "\nTemp: "    + p[1]           +
@@ -180,8 +183,11 @@ MyApplet.prototype = {
                 "\nTraffic: " + p[7]           +
                 "\nWarnings: "+ p[6]
             );
+            // Show codec in label only when session active (keeps it compact otherwise)
+            if (codecLabel) this.set_applet_label(alert + dot + label + uc + codecLabel);
         } catch(e) {}
     },
+
 
     // ── Profile loading (deduped, last-wins, insertion order) ─────────────────
 

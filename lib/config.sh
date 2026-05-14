@@ -6,6 +6,7 @@ show_config() {
         show)
             echo "# Effective remote-studio config"
             echo "DEFAULT_PROFILE=${DEFAULT_PROFILE}"
+            echo "DEFAULT_SESSION_PROFILE=${DEFAULT_SESSION_PROFILE:-${DEFAULT_PROFILE}}"
             echo "DEFAULT_RUSTDESK_PRESET=${DEFAULT_RUSTDESK_PRESET}"
             echo "AUTO_SESSION=${AUTO_SESSION:-false}"
             [ -f "$USER_CONFIG" ] && echo "# User config: $USER_CONFIG" || echo "# No user config file"

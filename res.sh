@@ -43,6 +43,9 @@ STATUS_FILE="$STATUS_DIR/status"
 [ -f "$USER_CONFIG" ] && source "$USER_CONFIG"
 DEFAULT_PROFILE="${DEFAULT_PROFILE:-mac}"
 DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
+# DEFAULT_SESSION_PROFILE overrides DEFAULT_PROFILE specifically for session start.
+# Falls back to DEFAULT_PROFILE so existing configs continue to work.
+DEFAULT_SESSION_PROFILE="${DEFAULT_SESSION_PROFILE:-$DEFAULT_PROFILE}"
 
 # ---- Cache state ----
 _WARN_CACHE=""
@@ -108,6 +111,9 @@ if [ -n "${1:-}" ]; then
                 show_tailnet_doctor
             elif [ "${2:-}" = "hosts" ]; then
                 show_tailnet_hosts
+            elif [ "${2:-}" = "exit-node" ]; then
+                _en=$(tailscale exit-node list 2>/dev/null | awk '/selected/ {print $1}' | head -1 || true)
+                echo "Exit node: ${_en:-none}"
             else
                 show_tailnet
             fi

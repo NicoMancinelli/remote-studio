@@ -102,7 +102,7 @@ do_action() {
 }
 
 session_start() {
-    local profile="${1:-$DEFAULT_PROFILE}"
+    local profile="${1:-${DEFAULT_SESSION_PROFILE:-$DEFAULT_PROFILE}}"
     mkdir -p "$(dirname "$SESSION_FILE")"
     { echo "started_at=$(date '+%Y-%m-%d %H:%M:%S')"; echo "profile=$profile"; echo "speed=$(speed_state)"; echo "caffeine=$(caffeine_state)"; echo "state=$(cat "$STATE_FILE" 2>/dev/null || true)"; } > "$SESSION_FILE"
     if ! apply_profile "$profile"; then
@@ -141,7 +141,7 @@ session_stop() {
 
 show_session() {
     case "${1:-status}" in
-        start) session_start "${2:-mac}" ;;
+        start) session_start "${2:-}" ;;
         stop) session_stop ;;
         status) [ -f "$SESSION_FILE" ] && cat "$SESSION_FILE" || echo "No active session." ;;
         *) echo "Usage: res session start [PROFILE] | stop | status"; return 1 ;;

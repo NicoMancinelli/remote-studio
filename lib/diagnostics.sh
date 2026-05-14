@@ -69,6 +69,23 @@ show_doctor() {
         doctor_check "update" "WARN" "update available (res update)"
     fi
 
+    # Check latest published GitHub release tag (non-blocking, 3 s timeout)
+    local gh_latest gh_repo
+    gh_repo=$(git -C "$ROOT_DIR" remote get-url origin 2>/dev/null \
+        | sed 's|.*github\.com[:/]\(.*\)\.git|\1|;s|.*github\.com[:/]\(.*\)|\1|' || true)
+    if [ -n "$gh_repo" ] && command -v curl >/dev/null 2>&1; then
+        gh_latest=$(curl -fsSL --max-time 3 \
+            "https://api.github.com/repos/${gh_repo}/releases/latest" 2>/dev/null \
+            | grep '"tag_name"' | grep -o '"v[^"]*"' | tr -d '"v' | head -1 || true)
+        if [ -z "$gh_latest" ]; then
+            doctor_check "gh-release" "INFO" "could not fetch (offline or no releases)"
+        elif [ "$gh_latest" = "$VERSION" ]; then
+            doctor_check "gh-release" "OK" "v${VERSION} is the latest release"
+        else
+            doctor_check "gh-release" "WARN" "v${VERSION} running, v${gh_latest} released (res update)"
+        fi
+    fi
+
     # Log file size
     if [ -f "$LOG_FILE" ]; then
         local lsize
@@ -221,7 +238,15 @@ show_status() {
     fi
     mkdir -p "$STATUS_DIR"
     check_auto_speed
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct"
+    # Codec field (index 12): last codec seen in RustDesk log, empty when no session
+    local rd_codec=""
+    if [ "$USERS" -gt 0 ]; then
+        local _log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
+        [ -f "$_log_file" ] || _log_file="$HOME/.rustdesk/log/rustdesk.log"
+        [ -f "$_log_file" ] && rd_codec=$(grep -i 'codec' "$_log_file" 2>/dev/null | tail -1 \
+            | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true)
+    fi
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $rd_codec"
     printf '%s\n' "$line" > "$STATUS_FILE"; printf '%s\n' "$line"
 }
 
