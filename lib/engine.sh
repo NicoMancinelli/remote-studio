@@ -122,7 +122,9 @@ session_stop() {
         if [ -n "$previous_state" ]; then
             echo "$previous_state" > "$STATE_FILE"
             read -r s_width s_height s_scale s_ts s_cursor rest <<< "$previous_state"
-            s_label=$(echo "$previous_state" | awk -F"'" '{print $2}')
+            # Strip surrounding single-quotes from rest to get the label
+            s_label="${rest#\'}"
+            s_label="${s_label%\'}"
             if [[ -z "$s_width" || ! "$s_width" =~ ^[0-9]+$ || -z "$s_height" || ! "$s_height" =~ ^[0-9]+$ ]]; then
                 log_event "session_stop: no valid saved state, skipping display restore"
             else

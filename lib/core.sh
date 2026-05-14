@@ -55,23 +55,34 @@ get_renderer_summary() {
     [ -n "$renderer" ] && echo "$renderer" || echo "unknown"
 }
 
-# Ping runs in the background; result is cached for 30 s so get_stats never
-# blocks the TUI render loop for the 1 s ping timeout.
+# Ping cache: result is written to a file so a background subshell can
+# communicate it back to any future caller (shell variables written in
+# a background & subshell are discarded when it exits).
+_ping_cache_file() { printf '%s/.ping_cache' "$STATUS_DIR"; }
+
 _refresh_ping_cache() {
-    local _tmp
-    _tmp=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
-    _PING_CACHE="$_tmp"
-    _PING_CACHE_TS=$(date +%s)
+    local result f
+    f="$(_ping_cache_file)"
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    result=$(ping -c 1 -W 1 8.8.8.8 2>/dev/null \
+        | grep 'time=' | awk -F'time=' '{print $2}' | cut -d' ' -f1 | cut -d'.' -f1)
+    printf '%s\n%s\n' "$(date +%s)" "${result}" > "$f" 2>/dev/null || true
 }
 
 get_ping_cached() {
-    local now
+    local now ts val f
+    f="$(_ping_cache_file)"
     now=$(date +%s)
-    if [ -z "$_PING_CACHE_TS" ] || [ $(( now - _PING_CACHE_TS )) -gt 30 ]; then
-        # Launch in background; first call returns stale/empty until it lands
-        _refresh_ping_cache &
+    if [ -f "$f" ]; then
+        { IFS= read -r ts && IFS= read -r val; } < "$f"
+        if [ "$(( now - ${ts:-0} ))" -le 30 ]; then
+            printf '%s' "$val"
+            return 0
+        fi
     fi
-    printf '%s' "$_PING_CACHE"
+    # Cache cold or stale — kick off background refresh; return stale value (or empty)
+    _refresh_ping_cache &
+    printf '%s' "${val:-}"
 }
 
 get_stats() {
@@ -137,8 +148,14 @@ get_warning_summary() {
         warnings=$((warnings + 1)); messages+=("applet-symlink")
     fi
 
-    if [ "$ts_state" = "NeedsLogin" ] || [ "$ts_state" = "Stopped" ]; then
-        warnings=$((warnings + 1)); messages+=("tailscale-${ts_state,,}")
+    # Auth / connectivity states (only when daemon is active, to avoid double-counting)
+    if [ "$tailscale_state" = "active" ]; then
+        case "$ts_state" in
+            NeedsLogin|Stopped)
+                warnings=$((warnings + 1)); messages+=("tailscale-${ts_state,,}") ;;
+            NoState|Starting|NoNetwork)
+                warnings=$((warnings + 1)); messages+=("tailscale-offline") ;;
+        esac
     fi
 
     if [ "$warnings" -eq 0 ]; then

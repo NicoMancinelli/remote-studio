@@ -91,16 +91,46 @@ show_rustdesk() {
             fi
             ;;
         status)
+            local users conn_type remote_ip local_port
+            users=$(ss -tnp 2>/dev/null | awk '/ESTAB/ && /rustdesk/{print $5}' \
+                | cut -d: -f1 | sort -u | wc -l)
+            echo "Active sessions : $users"
+
+            if [ "$users" -gt 0 ]; then
+                if ss -tnp 2>/dev/null | grep -i rustdesk | grep -qi ":21118"; then
+                    conn_type="Direct"
+                else
+                    conn_type="Relayed (via DERP)"
+                fi
+                echo "Connection type : $conn_type"
+
+                remote_ip=$(ss -tnp 2>/dev/null \
+                    | awk '/ESTAB/ && /rustdesk/ {split($5,a,":"); print a[1]; exit}')
+                local_port=$(ss -tnp 2>/dev/null \
+                    | awk '/ESTAB/ && /rustdesk/ {split($4,a,":"); print a[length(a)]; exit}')
+                [ -n "$remote_ip" ]   && echo "Remote IP       : $remote_ip"
+                [ -n "$local_port" ]  && echo "Local port      : $local_port"
+            fi
+
             local log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
             [ -f "$log_file" ] || log_file="$HOME/.rustdesk/log/rustdesk.log"
             if [ -f "$log_file" ]; then
-                grep -E "(codec|fps|bitrate|connected|disconnected)" "$log_file" | tail -n 20
+                echo ""
+                echo "-- Recent codec/perf events (last 50 log lines) --"
+                # Extract the last mention of each key metric
+                local last50
+                last50=$(tail -n 50 "$log_file" 2>/dev/null)
+                local codec fps bitrate
+                codec=$(printf '%s' "$last50" | grep -i 'codec'   | tail -1)
+                fps=$(printf '%s' "$last50"   | grep -i 'fps'     | tail -1)
+                bitrate=$(printf '%s' "$last50"| grep -i 'bitrate' | tail -1)
+                [ -n "$codec"   ] && echo "  Codec   : $codec"
+                [ -n "$fps"     ] && echo "  FPS     : $fps"
+                [ -n "$bitrate" ] && echo "  Bitrate : $bitrate"
+                [ -z "$codec$fps$bitrate" ] && echo "  (no codec/fps/bitrate found in last 50 lines)"
             else
-                echo "RustDesk log not found."
+                echo "(RustDesk log not found — check ~/.local/share/rustdesk/log/)"
             fi
-            local users
-            users=$(ss -tnp 2>/dev/null | grep -c -i "rustdesk.*ESTAB" || true)
-            echo "Active sessions: $users"
             ;;
         log)
             local nlines=${2:-50}

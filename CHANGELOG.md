@@ -3,32 +3,39 @@
 ## [Unreleased]
 
 ### Added
-- `applet.js`: collapsible submenu groups — **Device Presets**, **Performance & Session**,
-  **RustDesk**, **System & Security** — replace the flat item list, greatly condensing the
-  panel menu. Groups remember their open/closed state for the lifetime of the Cinnamon session.
-- `applet.js`: "smart expand" — the Device Presets group auto-opens whenever the current mode
-  matches a known profile, so the active checkmark is always immediately visible.
-- `applet.js`: reads `DEFAULT_PROFILE` from `~/.config/remote-studio/remote-studio.conf` at
-  menu-open time; the **Start Session** item now reflects the real default instead of hardcoding `mac`.
-- `lib/core.sh`: `get_ping_cached` / `_refresh_ping_cache` — ping is now non-blocking. The
-  result is cached for 30 s and refreshed in the background, eliminating the ≤1 s stall that
-  `ping -W 1` caused on every `get_stats` call (dashboard render, `res status`, etc.). While
-  the cache is cold the dashboard shows `…` instead of blocking.
-- `lib/tui.sh`: `_tui_collect_state` helper — eliminates the 8-line duplication between
+- `lib/core.sh`: `get_ping_cached` / `_refresh_ping_cache` — ping is now non-blocking.
+  Result is written to `$STATUS_DIR/.ping_cache` (file-based IPC — shell variables written
+  in a background `&` subshell are discarded on exit). Cache TTL is 30 s; shows `…` while
+  warming instead of blocking for ≤1 s.
+- `lib/core.sh`: `_tui_collect_state` helper — eliminates the 8-line duplication between
   `tui_header` and `tui_title_header`.
+- `lib/diagnostics.sh` `show_doctor`: exit node status row (`exit-node: none / hostname`).
+  Tailscale row now also shows `BackendState` so `tailscale-starting` etc. are visible.
+- `lib/core.sh` `get_warning_summary`: catches `NoState`, `Starting`, and `NoNetwork`
+  backend states as `tailscale-offline` warnings (only fires when daemon is active, avoiding
+  double-counting with the existing IP-missing warning).
+- `applet/applet.js`: collapsible submenu groups (Device Presets, Performance & Session,
+  RustDesk, System & Security). Groups remember open/closed state per Cinnamon session.
+  Smart auto-expand: Device Presets opens when current mode matches a known profile.
+  Reads `DEFAULT_PROFILE` from config at menu-open time. All `Mainloop.*` → `GLib.*`.
 
 ### Fixed
-- `show_update`: changed `exit 1` → `return 1` on git pull failure — `exit` killed the parent
-  shell when invoked from the TUI via `run_panel_command`.
-- `applet.js` `_loadProfiles`: duplicate menu items appeared when a profile key existed in both
-  the default and user `profiles.conf` files. Now deduplicates by key (last-wins, user overrides
-  default), preserving insertion order.
+- `show_update`: `exit 1` → `return 1` on git pull failure (was killing the TUI shell).
+- `applet.js` `_loadProfiles`: duplicate entries when a key appeared in both default and
+  user profiles.conf. Now deduplicates by key (last-wins, insertion order preserved).
+- `lib/core.sh` ping cache: previous implementation wrote to shell variables from a
+  background subshell — bash discards these, so the cache was never populated. Fixed by
+  writing to a file in `STATUS_DIR` instead.
+- `lib/engine.sh` `session_stop`: replaced `awk -F"'"` label extraction with parameter
+  expansion on the `rest` field from `read`. Safer when labels contain spaces; avoids a
+  forked subshell per stop.
 
 ### Changed
-- `applet.js`: migrated all `Mainloop.*` calls to `GLib.*` equivalents (`GLib.timeout_add_seconds`,
-  `GLib.source_remove`, `GLib.timeout_add`) — `Mainloop` is deprecated in Cinnamon 5.4+.
-- `applet.js`: `_addMenuItem` / `_addTerminalItem` replaced by `_subItem` / `_subTerminal` /
-  `_subSep` helpers that operate on a submenu group rather than the root menu.
+- `lib/services.sh` `show_rustdesk status`: produces structured output (session count,
+  Direct/Relayed, remote IP, local port, last codec/FPS/bitrate from log) instead of a
+  raw `grep` dump.
+- `applet/applet.js`: `_addMenuItem`/`_addTerminalItem` → `_subItem`/`_subTerminal`/
+  `_subSep` helpers that operate on submenu groups.
 
 ## [8.1] — 2026-05-02
 

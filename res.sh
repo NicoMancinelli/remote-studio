@@ -47,8 +47,6 @@ DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 # ---- Cache state ----
 _WARN_CACHE=""
 _WARN_CACHE_TS=0
-_PING_CACHE=""
-_PING_CACHE_TS=0
 
 # ---- Profile registry ----
 declare -A PROFILES=()

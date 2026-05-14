@@ -42,11 +42,16 @@ show_doctor() {
         doctor_check "tailscale" "MISS" "not installed (curl -fsSL https://tailscale.com/install.sh | sh)"
     else
         tip=$(get_tailnet_ip)
+        local ts_backend
+        ts_backend=$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || true)
         if [ -n "$tip" ]; then
-            doctor_check "tailscale" "OK" "$tip"
+            doctor_check "tailscale" "OK" "$tip (${ts_backend:-unknown})"
         else
-            doctor_check "tailscale" "WARN" "no tailnet IP (tailscale up?)"
+            doctor_check "tailscale" "WARN" "no tailnet IP — state: ${ts_backend:-unknown} (tailscale up?)"
         fi
+        local exit_node
+        exit_node=$(tailscale exit-node list 2>/dev/null | awk '/selected/ {print $1}' | head -1 || true)
+        doctor_check "exit-node" "INFO" "${exit_node:-none}"
     fi
     git -C "$ROOT_DIR" \
         -c http.lowSpeedLimit=1000 \
