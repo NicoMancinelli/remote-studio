@@ -6,13 +6,19 @@ on:
     paths:
       - '**.sh'
       - 'tests/**'
-      - 'res'
+      - 'Makefile'
+      - 'res.sh'
+      - 'lib/**'
+      - 'package/**'
   pull_request:
     branches: [ master ]
     paths:
       - '**.sh'
       - 'tests/**'
-      - 'res'
+      - 'Makefile'
+      - 'res.sh'
+      - 'lib/**'
+      - 'package/**'
 
 jobs:
   shellcheck:
@@ -27,24 +33,21 @@ jobs:
         format: gcc
 
   bats:
-    name: Bats tests
+    name: Local test target
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install bats
-        run: sudo apt-get install -y bats
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck
       - name: Run tests
-        run: bats tests/
-        if: hashFiles('tests/') != ''
+        run: make test
 
   syntax:
-    name: Bash syntax check
+    name: App syntax check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify all .sh files parse
+      - name: Verify shell and applet syntax
         run: |
-          for f in $(find . -name '*.sh' -not -path './dist/*'); do
-            echo "Checking $f"
-            bash -n "$f"
-          done
+          bash -n res.sh install.sh install-remote-studio.sh lib/*.sh package/build-deb.sh
+          node --check applet/applet.js

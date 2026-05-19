@@ -17,7 +17,10 @@ jobs:
       - name: Install runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bash whiptail x11-xserver-utils mesa-utils dpkg
+          sudo apt-get install -y bash whiptail x11-xserver-utils mesa-utils dpkg shellcheck bats nodejs logrotate
+
+      - name: Run local release check
+        run: make release-check
 
       - name: Build .deb
         run: bash package/build-deb.sh
@@ -43,6 +46,9 @@ jobs:
 
       - name: Run res config show
         run: res config show
+
+      - name: Run status JSON smoke test
+        run: res status --json | python3 -m json.tool >/dev/null
 
       - name: Verify systemd unit syntax
         run: |

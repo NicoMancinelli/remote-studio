@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `res status --json` for automation while preserving the pipe-delimited applet status file.
+- `make ci` and `make release-check` local guardrails.
+- Bats coverage for JSON status output and applet status file preservation.
+- GitHub Actions now exercise the same local test/release-check targets used for handoff.
+- Debian package builds now force root-owned archive entries instead of preserving the local build user.
+
+### Fixed
+- `make test` now fails when ShellCheck fails instead of reporting lint as skipped.
+- ShellCheck SC2059 warnings in the text-mode TUI menu.
+- Cinnamon applet fallback status path now matches the shell fallback `/tmp/remote-studio-$UID`.
+- `res rustdesk status` and user counting now parse bracketed IPv6-mapped RustDesk socket addresses correctly.
+- Main TUI header now counts active RustDesk sockets with the same `ESTAB`/process matching used by status surfaces.
+- Applet status file now writes `none` in the codec field when no codec is known, preserving the pipe-delimited field count after trimming.
+- TUI quick actions now use `DEFAULT_SESSION_PROFILE` for default session workflows instead of `DEFAULT_PROFILE`.
+- Config sample now documents `DEFAULT_SESSION_PROFILE` and `AUTO_SESSION`.
+
+### Changed
+- AI handoff, roadmap, contributing, release, and quick-start docs now reflect the current split-module architecture and validation commands.
+- README and quick-start docs now document the maintained status contracts, fallback status path, and all built-in profiles.
+- `docs/quick-start.md` now points to `docs/quickstart.md` instead of carrying a second quick-start flow.
+- Security reporting guidance now calls out affected surfaces and reminds reporters to redact credentials from logs/configs.
+
 ## [8.2] — 2026-05-14
 
 ### Added

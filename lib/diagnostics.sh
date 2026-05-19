@@ -223,7 +223,18 @@ show_info() {
     echo -e "  RustDesk:    ${USERS} user(s)"
 }
 
+json_escape() {
+    local s=${1:-}
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/\\n}
+    s=${s//$'\r'/\\r}
+    s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
 show_status() {
+    local format=${1:-text}
     local cur net warning_data warning_count warning_text line res tailnet_ip lan_ip combined_ip rustdesk_direct
     get_stats; net=$(get_net_speed); cur=$(get_current_mode); res=$(get_current_resolution)
     warning_data=$(get_warning_summary); warning_count=${warning_data%%|*}; warning_text=${warning_data#*|}
@@ -246,8 +257,29 @@ show_status() {
         [ -f "$_log_file" ] && rd_codec=$(grep -i 'codec' "$_log_file" 2>/dev/null | tail -1 \
             | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true)
     fi
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $rd_codec"
-    printf '%s\n' "$line" > "$STATUS_FILE"; printf '%s\n' "$line"
+    local pipe_codec="${rd_codec:-none}"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $pipe_codec"
+    printf '%s\n' "$line" > "$STATUS_FILE"
+
+    if [ "$format" = "json" ]; then
+        printf '{'
+        printf '"mode":"%s",' "$(json_escape "$cur")"
+        printf '"temperature":"%s",' "$(json_escape "$TEMP")"
+        printf '"latency":"%s",' "$(json_escape "$PING_STAT")"
+        printf '"users":%s,' "${USERS:-0}"
+        printf '"ram":"%s",' "$(json_escape "$RAM")"
+        printf '"warnings":{"count":%s,"summary":"%s"},' "${warning_count:-0}" "$(json_escape "$warning_text")"
+        printf '"network":"%s",' "$(json_escape "$net")"
+        printf '"ip":"%s",' "$(json_escape "$combined_ip")"
+        printf '"connection":"%s",' "$(json_escape "$RUSTDESK_CONN_TYPE")"
+        printf '"resolution":"%s",' "$(json_escape "$res")"
+        printf '"direct_address":"%s",' "$(json_escape "$rustdesk_direct")"
+        printf '"codec":"%s",' "$(json_escape "$rd_codec")"
+        printf '"status_file":"%s"' "$(json_escape "$STATUS_FILE")"
+        printf '}\n'
+    else
+        printf '%s\n' "$line"
+    fi
 }
 
 show_log() { local lines=${1:-20}; if [ -f "$LOG_FILE" ]; then tail -n "$lines" "$LOG_FILE"; else echo "No log file yet."; fi; }

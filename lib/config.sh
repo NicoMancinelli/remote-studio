@@ -13,15 +13,21 @@ show_config() {
             ;;
         get)
             [ -z "${2:-}" ] && { echo "Usage: res config get KEY"; return 1; }
-            grep "^${2}=" "$USER_CONFIG" 2>/dev/null | tail -1 | cut -d'=' -f2- || printf ""
+            [[ "$2" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "Invalid config key: $2" >&2; return 1; }
+            awk -F= -v key="$2" '$1 == key { value=$0; sub(/^[^=]*=/, "", value); found=value } END { if (found != "") printf "%s", found }' \
+                "$USER_CONFIG" 2>/dev/null || printf ""
             ;;
         set)
             { [ -z "${2:-}" ] || [ -z "${3:-}" ]; } && { echo "Usage: res config set KEY VALUE"; return 1; }
             local key="$2" val="$3"
+            [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "Invalid config key: $key" >&2; return 1; }
+            [[ "$val" != *$'\n'* && "$val" != *$'\r'* ]] || { echo "Invalid config value: newlines are not supported" >&2; return 1; }
             mkdir -p "$(dirname "$USER_CONFIG")"
-            if grep -q "^${key}=" "$USER_CONFIG" 2>/dev/null; then
-                awk -v k="$key" -v v="$val" '$0 ~ ("^" k "=") { print k "=" v; next } { print }' \
-                    "$USER_CONFIG" > "${USER_CONFIG}.tmp" && mv "${USER_CONFIG}.tmp" "$USER_CONFIG"
+            if [ -f "$USER_CONFIG" ] && awk -F= -v k="$key" '$1 == k { found=1 } END { exit found ? 0 : 1 }' "$USER_CONFIG"; then
+                local tmp
+                tmp=$(mktemp "${USER_CONFIG}.XXXXXX")
+                awk -F= -v k="$key" -v v="$val" '$1 == k { print k "=" v; next } { print }' \
+                    "$USER_CONFIG" > "$tmp" && mv "$tmp" "$USER_CONFIG"
             else
                 echo "${key}=${val}" >> "$USER_CONFIG"
             fi
@@ -105,6 +111,7 @@ show_help() {
     echo "  update                   Pull latest code and re-run install"
     echo "  profiles                 List all profiles and sources"
     echo "  config [show|get K|set K V]"
+    echo "  status [--json]          Print applet status (JSON for automation)"
     echo "  version, help"
 }
 

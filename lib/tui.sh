@@ -57,9 +57,10 @@ confirm_action() { whiptail --title "Confirm" --yesno "$1" 10 70; }
 # ---- Panels ----
 
 tui_quick() {
-    local choice def_label
-    def_label="${PROFILES[${DEFAULT_PROFILE}]%%|*}"
-    [ -z "$def_label" ] && def_label="$DEFAULT_PROFILE"
+    local choice session_profile def_label
+    session_profile="${DEFAULT_SESSION_PROFILE:-$DEFAULT_PROFILE}"
+    def_label="${PROFILES[${session_profile}]%%|*}"
+    [ -z "$def_label" ] && def_label="$session_profile"
     while true; do
         choice=$(whiptail --title "Quick Actions" \
             --backtitle "$(tui_title_header)" \
@@ -76,13 +77,13 @@ tui_quick() {
         case "$choice" in
             back) return 0 ;;
             default-quality)
-                session_start "$DEFAULT_PROFILE" && show_rustdesk apply quality
+                session_start "$session_profile" && show_rustdesk apply quality
                 ;;
             default-balanced)
-                session_start "$DEFAULT_PROFILE" && show_rustdesk apply balanced
+                session_start "$session_profile" && show_rustdesk apply balanced
                 ;;
             default-speed)
-                session_start "$DEFAULT_PROFILE" && show_rustdesk apply speed
+                session_start "$session_profile" && show_rustdesk apply speed
                 ;;
             ipad-balanced)
                 session_start ipad && show_rustdesk apply balanced
@@ -615,11 +616,11 @@ show_text_menu() {
         echo -e "${CYAN}└────────────────────────────────────────────────────────────┘${NC}"
         tui_header
         echo -e "\n${DIM}──────────────────────────────────────────────────────────────${NC}"
-        printf "  ${CYAN}1)${NC} Profiles         ${CYAN}4)${NC} System\n"
-        printf "  ${CYAN}2)${NC} Performance      ${CYAN}5)${NC} Dashboard\n"
-        printf "  ${CYAN}3)${NC} Diagnostics      ${CYAN}6)${NC} Tailnet\n"
-        printf "  ${CYAN}7)${NC} Quick Actions    ${CYAN}8)${NC} Help\n"
-        printf "  ${CYAN}0)${NC} Exit\n"
+        printf "  %s1)%s Profiles         %s4)%s System\n" "$CYAN" "$NC" "$CYAN" "$NC"
+        printf "  %s2)%s Performance      %s5)%s Dashboard\n" "$CYAN" "$NC" "$CYAN" "$NC"
+        printf "  %s3)%s Diagnostics      %s6)%s Tailnet\n" "$CYAN" "$NC" "$CYAN" "$NC"
+        printf "  %s7)%s Quick Actions    %s8)%s Help\n" "$CYAN" "$NC" "$CYAN" "$NC"
+        printf "  %s0)%s Exit\n" "$CYAN" "$NC"
         echo -e "${DIM}──────────────────────────────────────────────────────────────${NC}"
         echo ""
         read -r -p "Selection: " choice

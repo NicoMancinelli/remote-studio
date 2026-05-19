@@ -7,7 +7,12 @@
 # containing letters, numbers, dots, underscores, dashes, or slashes.
 
 DEFAULT_PROFILE=mac
+DEFAULT_SESSION_PROFILE=mac
 DEFAULT_RUSTDESK_PRESET=default
+
+# Enable when you run `res watch` or the user service and want RustDesk
+# connect/disconnect events to start and stop display sessions automatically.
+AUTO_SESSION=false
 
 # res xorg uses nvidia by default for GPU-backed remote sessions.
 # Set XORG_DRIVER=dummy only if you intentionally need the Xorg dummy driver.

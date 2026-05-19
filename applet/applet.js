@@ -6,15 +6,31 @@ const Gio       = imports.gi.Gio;
 const St        = imports.gi.St;
 
 const RES_CMD     = "/usr/local/bin/res";
-const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || "/tmp";
-const STATUS_DIR  = GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS_DIR)
+const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || GLib.get_user_runtime_dir();
+function _fallbackUid() {
+    let envUid = GLib.getenv("UID") || GLib.getenv("EUID");
+    if (envUid) return envUid;
+    let runtimeMatch = (RUNTIME_DIR || "").match(/\/(\d+)$/);
+    return runtimeMatch ? runtimeMatch[1] : GLib.get_user_name();
+}
+
+const FALLBACK_UID = _fallbackUid();
+const STATUS_DIR  = (RUNTIME_DIR && GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS_DIR))
     ? RUNTIME_DIR + "/remote-studio"
-    : "/tmp/remote-studio";
+    : "/tmp/remote-studio-" + FALLBACK_UID;
 const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE  = GLib.get_home_dir() + "/.res_state";
 
 // Resolve profiles.conf from the res symlink; fall back to .deb install path
-const _resLink    = GLib.file_read_link(RES_CMD, null);
+function _safeReadLink(path) {
+    try {
+        return GLib.file_read_link(path, null);
+    } catch(e) {
+        return null;
+    }
+}
+
+const _resLink    = _safeReadLink(RES_CMD);
 const _repoRoot   = _resLink ? GLib.path_get_dirname(_resLink) : null;
 const _repoProfs  = _repoRoot ? _repoRoot + "/config/profiles.conf" : null;
 const PROFILES_FILE = (_repoProfs && GLib.file_test(_repoProfs, GLib.FileTest.EXISTS))
@@ -31,6 +47,8 @@ const MODE_ICONS = {
     "iPhone Portrait": "phone-symbolic",
     "Reset":           "view-refresh-symbolic",
 };
+
+const MAX_PANEL_LABEL = 28;
 
 // Per-session open/closed state for each submenu group.
 // "presets" starts open — most common action is one click away.
@@ -60,6 +78,7 @@ MyApplet.prototype = {
         this._timeout       = null;
         this._fileMonitor   = null;
         this._notifyEnabled = true;
+        this._refreshInFlight = false;
 
         this._scheduleUpdate();
         this._setupFileWatch();
@@ -71,12 +90,30 @@ MyApplet.prototype = {
     _scheduleUpdate: function() {
         if (this._timeout) GLib.source_remove(this._timeout);
 
-        GLib.spawn_async(null,
-            ["/bin/bash", "-c",
-             "mkdir -p " + GLib.shell_quote(STATUS_DIR) +
-             " && " + GLib.shell_quote(RES_CMD) +
-             " status > " + GLib.shell_quote(STATUS_FILE)],
-            null, GLib.SpawnFlags.SEARCH_PATH, null, null);
+        if (!this._refreshInFlight) {
+            this._refreshInFlight = true;
+            try {
+                let [ok, pid] = GLib.spawn_async(null,
+                    ["/bin/bash", "-c",
+                     "mkdir -p " + GLib.shell_quote(STATUS_DIR) +
+                     " && " + GLib.shell_quote(RES_CMD) +
+                     " status > " + GLib.shell_quote(STATUS_FILE)],
+                    null,
+                    GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                    null, null);
+                if (ok) {
+                    GLib.child_watch_add(GLib.PRIORITY_DEFAULT, pid, () => {
+                        this._refreshInFlight = false;
+                        GLib.spawn_close_pid(pid);
+                    });
+                } else {
+                    this._refreshInFlight = false;
+                }
+            } catch(e) {
+                this._refreshInFlight = false;
+                this._setUnavailable("Status refresh failed");
+            }
+        }
 
         this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 10, () => {
             this._timeout = null;
@@ -114,7 +151,10 @@ MyApplet.prototype = {
     _getDirectAddress: function() {
         try {
             let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
-            if (ok) { let p = buf.toString().trim().split(" | "); return (p[11] || "").trim() || null; }
+            if (ok) {
+                let status = this._parseStatus(buf.toString());
+                return status ? status.direct : null;
+            }
         } catch(e) {}
         return null;
     },
@@ -139,53 +179,124 @@ MyApplet.prototype = {
         return "video-display-symbolic";
     },
 
+    _ellipsize: function(text, maxLength) {
+        text = (text || "").trim();
+        if (text.length <= maxLength) return text;
+        if (maxLength <= 1) return text.slice(0, maxLength);
+        return text.slice(0, maxLength - 1).trim() + "…";
+    },
+
+    _compactModeLabel: function(label) {
+        label = (label || "Unknown").replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+        return this._ellipsize(label, MAX_PANEL_LABEL);
+    },
+
+    _panelLabel: function(status) {
+        let dot = status.users > 0 ? (status.connType === "Direct" ? "● " : "◐ ") : "";
+        let alert = status.warnings > 0 ? "⚠ " : "";
+        let uc = status.users > 0 ? " 👥" + status.users : "";
+        let base = alert + dot + this._compactModeLabel(status.label) + uc;
+
+        if (base.length > MAX_PANEL_LABEL) {
+            let reserved = alert.length + dot.length + uc.length;
+            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), MAX_PANEL_LABEL - reserved) + uc;
+        }
+        return base;
+    },
+
+    _parseStatus: function(raw) {
+        raw = (raw || "").trim();
+        if (!raw) return null;
+
+        if (raw[0] === "{") {
+            try {
+                let j = JSON.parse(raw);
+                return {
+                    label: (j.mode || "Unknown").toString(),
+                    temp: (j.temperature || "N/A").toString(),
+                    latency: (j.latency || "N/A").toString(),
+                    users: parseInt(j.users, 10) || 0,
+                    ram: (j.ram || "N/A").toString(),
+                    warnings: parseInt((j.warnings && j.warnings.count) || 0, 10) || 0,
+                    warningText: ((j.warnings && j.warnings.summary) || "none").toString(),
+                    traffic: (j.network || "N/A").toString(),
+                    ip: (j.ip || "N/A").toString(),
+                    connType: (j.connection || "N/A").toString(),
+                    resolution: (j.resolution || "N/A").toString(),
+                    direct: (j.direct_address || "").toString().trim() || null,
+                    codec: (j.codec || "").toString().trim()
+                };
+            } catch(e) {
+                return null;
+            }
+        }
+
+        let p = raw.split(" | ");
+        if (p.length < 9) return null;
+        return {
+            label: (p[0] || "Unknown").trim(),
+            temp: (p[1] || "N/A").trim(),
+            latency: (p[2] || "N/A").trim(),
+            users: parseInt(p[3], 10) || 0,
+            ram: (p[4] || "N/A").trim(),
+            warnings: parseInt(p[5], 10) || 0,
+            warningText: (p[6] || "none").trim(),
+            traffic: (p[7] || "N/A").trim(),
+            ip: (p[8] || "N/A").trim(),
+            connType: (p[9] || "N/A").trim(),
+            resolution: (p[10] || "N/A").trim(),
+            direct: (p[11] || "").trim() || null,
+            codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim()
+        };
+    },
+
+    _setUnavailable: function(reason) {
+        this.set_applet_icon_name("dialog-warning-symbolic");
+        this.set_applet_label("Res ?");
+        this.set_applet_tooltip("Remote Studio\n" + reason + "\nStatus: " + STATUS_FILE);
+    },
+
     _readStatus: function() {
         try {
             let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
             if (!ok) return;
-            let p = buf.toString().trim().split(" | ");
-            if (p.length < 9) return;
+            let status = this._parseStatus(buf.toString());
+            if (!status) {
+                this._setUnavailable("Status data is incomplete");
+                return;
+            }
 
-            let label     = p[0];
-            let users     = parseInt(p[3]) || 0;
-            let warnings  = parseInt(p[5]) || 0;
-            let connType  = (p[9] || "").trim();
-            let codec     = (p[12] || "").trim();
+            let users = status.users;
 
             if (this._notifyEnabled) {
                 if (users > this.lastUserCount)
-                    Util.spawnCommandLine("notify-send -u critical 'Remote Studio' '"
-                        + (users - this.lastUserCount) + " user(s) connected'");
+                    Util.spawn(["notify-send", "-u", "critical", "Remote Studio",
+                        (users - this.lastUserCount) + " user(s) connected"]);
                 else if (users < this.lastUserCount && this.lastUserCount > 0)
-                    Util.spawnCommandLine("notify-send -u normal 'Remote Studio' 'User disconnected ("
-                        + users + " remaining)'");
+                    Util.spawn(["notify-send", "-u", "normal", "Remote Studio",
+                        "User disconnected (" + users + " remaining)"]);
             }
             this.lastUserCount = users;
 
-            let dot   = users > 0 ? (connType === "Direct" ? "● " : "◐ ") : "";
-            let alert = warnings > 0 ? "⚠ " : "";
-            let uc    = users > 0 ? " 👥" + users : "";
-            let codecLabel = (users > 0 && codec) ? " [" + codec + "]" : "";
-
-            this.set_applet_icon_name(this._iconForMode(label));
-            this.set_applet_label(alert + dot + label + uc);
+            this.set_applet_icon_name(this._iconForMode(status.label));
+            this.set_applet_label(this._panelLabel(status));
             this.set_applet_tooltip(
                 "Remote Studio"   +
-                "\nMode: "    + label        +
-                "\nRes: "     + (p[10]||"N/A") +
-                "\nPath: "    + (p[9] ||"N/A") +
-                (codec ? "\nCodec: " + codec : "") +
-                "\nIP: "      + p[8]          +
-                "\nDirect: "  + (p[11]||"N/A") +
-                "\nTemp: "    + p[1]           +
-                "\nRAM: "     + p[4]           +
-                "\nLatency: " + p[2]           +
-                "\nTraffic: " + p[7]           +
-                "\nWarnings: "+ p[6]
+                "\nMode: "    + status.label      +
+                "\nRes: "     + status.resolution +
+                "\nPath: "    + status.connType   +
+                (status.codec ? "\nCodec: " + status.codec : "") +
+                "\nIP: "      + status.ip         +
+                "\nDirect: "  + (status.direct || "N/A") +
+                "\nTemp: "    + status.temp       +
+                "\nRAM: "     + status.ram        +
+                "\nLatency: " + status.latency    +
+                "\nTraffic: " + status.traffic    +
+                "\nWarnings: "+ status.warningText
             );
-            // Show codec in label only when session active (keeps it compact otherwise)
-            if (codecLabel) this.set_applet_label(alert + dot + label + uc + codecLabel);
-        } catch(e) {}
+        } catch(e) {
+            this._setUnavailable("Status read failed");
+        }
     },
 
 
@@ -328,9 +439,9 @@ MyApplet.prototype = {
                 "edit-copy-symbolic", St.IconType.SYMBOLIC
             );
             copyItem.connect("activate", () => {
-                Util.spawnCommandLine(
-                    "bash -c \"echo -n " + GLib.shell_quote(directAddr) + " | xclip -selection clipboard\""
-                );
+                Util.spawn(["bash", "-c",
+                    "printf %s \"$1\" | xclip -selection clipboard",
+                    "remote-studio", directAddr]);
             });
             this.menu.addMenuItem(copyItem);
         }

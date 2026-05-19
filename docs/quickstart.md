@@ -47,6 +47,7 @@ Verify with:
 
 ```bash
 res doctor
+res status --json
 ```
 
 All rows should be **OK** (or **INFO**). Fix any **WARN** rows before proceeding.
@@ -88,7 +89,9 @@ res config set DEFAULT_PROFILE mac15   # change default
 
 ```bash
 res mac          # MacBook Air 13″  (2560×1664)
+res mac-retina   # MacBook Air 13″ Retina (3024×1964)
 res mac15        # MacBook Air 15″  (2880×1864)
+res mac15-retina # MacBook Air 15″ Retina (3456×2234)
 res ipad         # iPad Pro 11″     (2424×1664)
 res ipad13       # iPad Pro 13″     (2064×2752)
 res iphonel      # iPhone Landscape (2868×1320)
@@ -240,6 +243,28 @@ Format: `key=Label|width|height|scale|text_scale|cursor_px`
 
 ---
 
+## Status Contracts
+
+Remote Studio has two status outputs:
+
+| Output | Consumer | Format |
+|---|---|---|
+| `res status` | Cinnamon applet and humans | Pipe-delimited line |
+| `res status --json` | Scripts, tests, CI | JSON object |
+
+Both commands refresh the applet status file. The preferred runtime path is
+`$XDG_RUNTIME_DIR/remote-studio/status`; if that directory is unavailable,
+Remote Studio falls back to `/tmp/remote-studio-$UID/status`.
+The applet file uses `none` for the codec field when no codec is known so the
+pipe-delimited field count stays stable after trimming.
+
+Current JSON fields: `mode`, `temperature`, `latency`, `users`, `ram`,
+`warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`,
+`codec`, and `status_file`. Use `status_file` when troubleshooting applet
+staleness.
+
+---
+
 ## Updates
 
 ```bash
@@ -274,6 +299,7 @@ Sections: Profiles · Performance · Diagnostics · System · Dashboard · Tailn
 | `~/.config/remote-studio/remote-studio.conf` | User config |
 | `~/.config/remote-studio/profiles.conf` | User profiles |
 | `$XDG_RUNTIME_DIR/remote-studio/status` | Live status (read by applet) |
+| `/tmp/remote-studio-$UID/status` | Fallback live status path when `XDG_RUNTIME_DIR` is unavailable |
 
 ---
 
@@ -286,7 +312,8 @@ Sections: Profiles · Performance · Diagnostics · System · Dashboard · Tailn
 **Applet shows no data / label stuck**
 - Reload Cinnamon: `Alt+F2` → `r`
 - Check applet symlinks: `res doctor` → `applet` row
-- Check status file: `cat $XDG_RUNTIME_DIR/remote-studio/status`
+- Check status JSON: `res status --json`
+- Check the `status_file` path from JSON and confirm it contains pipe-delimited applet data
 
 **RustDesk shows "Relayed" instead of "Direct"**
 - Ensure both machines are on the same Tailscale network

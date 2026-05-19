@@ -35,7 +35,10 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 
 - ✅ Add `res rustdesk status`: show active codec, FPS, and bitrate by parsing RustDesk logs or `/proc` socket details.
 - ✅ Add `res rustdesk log [N]`: tail the RustDesk service log (replaces manual `journalctl -u rustdesk`).
-- 🔴 Surface codec and FPS in `res status` and the applet tooltip when a session is active.
+- 🟡 Surface session media details in status surfaces.
+  - ✅ `res status` / `res status --json`: include last observed codec when a session is active.
+  - ✅ Cinnamon applet: shows codec in the panel label and tooltip when available.
+  - 🔴 FPS and bitrate are still limited to `res rustdesk status`.
 
 ---
 
@@ -44,7 +47,8 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 - 🟡 Show exit node status in `res tailnet` and `res doctor` (active exit node name or "none").
   - ✅ `res doctor`: exit-node row added.
   - ✅ `res tailnet` TUI: "Show Exit Node Status" menu item exists.
-  - 🔴 `res tailnet` CLI subcommand (`res tailnet exit-node`) not exposed as a direct CLI argument.
+  - ✅ `res tailnet exit-node` exposed as a direct CLI argument.
+  - 🔴 `res help` does not yet list `tailnet exit-node`.
 - ✅ Add a warning to `get_warning_summary` when the machine has been offline from the tailnet (NoState/Starting/NoNetwork backend states).
 - ✅ Add `res tailnet hosts`: list all tailnet peers with their IPs and online/offline status (thin wrapper around `tailscale status`).
 
@@ -54,7 +58,7 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 
 - ✅ Add `res custom <W> <H> [scale]` shorthand that applies a resolution without requiring a named profile, and prompts to save it to `~/.config/remote-studio/profiles.conf`.
 - ✅ Support portrait/landscape rotation toggle (`xrandr --rotate`) as a profile option or standalone `res rotate` command.
-- ✅ Add a `res profiles list` command that prints all loaded profiles (built-in and user) with their source file, for debugging override priority.
+- ✅ Add a `res profiles` command that prints all loaded profiles (built-in and user) with their source file, for debugging override priority.
 - ✅ Add an `ipad13` profile for the 13-inch iPad Pro (2064×2752 or landscape 2752×2064).
 
 ---
@@ -80,7 +84,14 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 
 - ✅ Add `res config set KEY VALUE` / `res config get KEY` commands to read and write `remote-studio.conf` without manually editing it.
 - ✅ Add `res config show` to print the effective config (defaults merged with user overrides).
-- 🔴 Support a `DEFAULT_SESSION_PROFILE` key in `remote-studio.conf` so `res session start` uses it without an argument.
+- ✅ Support a `DEFAULT_SESSION_PROFILE` key in `remote-studio.conf` so `res session start` uses it without an argument.
+
+## Developer Experience
+
+- ✅ Make `make test` fail on ShellCheck failures instead of treating them as a missing binary.
+- ✅ Add `make ci` for the local lead check: ShellCheck, bats, bash syntax, applet syntax, status JSON, installer dry-run.
+- ✅ Add `make release-check` for release rehearsal: local CI plus system installer dry-run and Debian package build.
+- ✅ Add `res status --json` for automation while preserving pipe-delimited applet status.
 
 ---
 
@@ -89,3 +100,10 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 - ✅ Capture screenshots of the Cinnamon applet (panel label, open menu, tooltip) and commit them to `docs/screenshots/`.
 - ✅ Capture `res doctor` terminal output and add it to `docs/screenshots/`.
 - ✅ Add a `docs/` directory with a quick-start guide for new machines.
+
+## Design Lead Priorities
+
+- 🟡 Keep the applet compact under real panel width: status first, details in tooltip/menu.
+- ✅ Reduce duplicate quick-start docs into one maintained path (`docs/quickstart.md`; `docs/quick-start.md` is a compatibility pointer).
+- ✅ Add a stable status schema section so applet, tests, and future integrations do not infer fields from prose.
+- 🔴 Add visual regression screenshots for the applet menu after GJS changes.

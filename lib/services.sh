@@ -92,8 +92,15 @@ show_rustdesk() {
             ;;
         status)
             local users conn_type remote_ip local_port
-            users=$(ss -tnp 2>/dev/null | awk '/ESTAB/ && /rustdesk/{print $5}' \
-                | cut -d: -f1 | sort -u | wc -l)
+            users=$(ss -tnp 2>/dev/null | awk '
+                function host(addr) {
+                    sub(/^\[/, "", addr)
+                    sub(/\]:[0-9]+$/, "", addr)
+                    sub(/:[0-9]+$/, "", addr)
+                    return addr
+                }
+                /ESTAB/ && /rustdesk/ { print host($5) }
+            ' | sort -u | wc -l)
             echo "Active sessions : $users"
 
             if [ "$users" -gt 0 ]; then
@@ -105,7 +112,15 @@ show_rustdesk() {
                 echo "Connection type : $conn_type"
 
                 remote_ip=$(ss -tnp 2>/dev/null \
-                    | awk '/ESTAB/ && /rustdesk/ {split($5,a,":"); print a[1]; exit}')
+                    | awk '
+                        function host(addr) {
+                            sub(/^\[/, "", addr)
+                            sub(/\]:[0-9]+$/, "", addr)
+                            sub(/:[0-9]+$/, "", addr)
+                            return addr
+                        }
+                        /ESTAB/ && /rustdesk/ { print host($5); exit }
+                    ')
                 local_port=$(ss -tnp 2>/dev/null \
                     | awk '/ESTAB/ && /rustdesk/ {split($4,a,":"); print a[length(a)]; exit}')
                 [ -n "$remote_ip" ]   && echo "Remote IP       : $remote_ip"

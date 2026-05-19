@@ -1,11 +1,9 @@
 #!/usr/bin/env bats
 # Tests for config file loading and the USER_CONFIG mechanism.
 #
-# res.sh has no "config" subcommand — configuration is a file at
-# ~/.config/remote-studio/remote-studio.conf that res.sh sources on
-# startup.  These tests verify that the file is picked up correctly
-# (DEFAULT_PROFILE, AUTO_SESSION, etc.) and that the state/log paths
-# honour $HOME.
+# res.sh has a config subcommand, plus startup config sourcing from
+# ~/.config/remote-studio/remote-studio.conf. These tests verify both paths
+# and that state/log files honor $HOME.
 
 SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/res.sh"
 
@@ -15,7 +13,7 @@ setup() {
 }
 
 # ---------------------------------------------------------------------------
-# USER_CONFIG sourcing
+# USER_CONFIG loading
 # ---------------------------------------------------------------------------
 
 @test "res version works with an empty HOME config dir" {
@@ -38,6 +36,25 @@ setup() {
     printf '# comment only\nDEFAULT_PROFILE=mac\n' > "$HOME/.config/remote-studio/remote-studio.conf"
     run bash "$SCRIPT" version
     [ "$status" -eq 0 ]
+}
+
+@test "user config is parsed without executing shell commands" {
+    local marker="$BATS_TEST_TMPDIR/config-executed"
+    printf 'DEFAULT_PROFILE=$(touch "%s")\nAUTO_SESSION=true\n' "$marker" > "$HOME/.config/remote-studio/remote-studio.conf"
+
+    run bash "$SCRIPT" config show
+    [ "$status" -eq 0 ]
+    [ ! -e "$marker" ]
+    [[ "$output" == *"AUTO_SESSION=true"* ]]
+}
+
+@test "quoted supported config values are loaded" {
+    printf 'DEFAULT_PROFILE="fallback"\nDEFAULT_SESSION_PROFILE='\''mac15'\''\n' > "$HOME/.config/remote-studio/remote-studio.conf"
+
+    run bash "$SCRIPT" config show
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEFAULT_PROFILE=fallback"* ]]
+    [[ "$output" == *"DEFAULT_SESSION_PROFILE=mac15"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -193,10 +210,32 @@ setup() {
     [ "$status" -ne 0 ]
 }
 
+@test "config set rejects invalid keys" {
+    run bash "$SCRIPT" config set "BAD-KEY" value
+    [ "$status" -ne 0 ]
+}
+
+@test "config get rejects invalid keys" {
+    run bash "$SCRIPT" config get "BAD-KEY"
+    [ "$status" -ne 0 ]
+}
+
 @test "config get missing key returns empty output" {
     # show_config get pipes through tail+cut which exit 0 even when grep finds
     # nothing, so the exit status is 0 for unknown keys; only the output is empty.
     run bash "$SCRIPT" config get NONEXISTENT_KEY_XYZ
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+@test "status --json emits parseable JSON and preserves applet status file" {
+    export XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/runtime"
+    mkdir -p "$XDG_RUNTIME_DIR"
+
+    run bash "$SCRIPT" status --json
+    [ "$status" -eq 0 ]
+
+    python3 -c 'import json,sys; data=json.load(sys.stdin); assert "mode" in data; assert "warnings" in data' <<< "$output"
+    [ -f "$XDG_RUNTIME_DIR/remote-studio/status" ]
+    grep -q " | " "$XDG_RUNTIME_DIR/remote-studio/status"
 }

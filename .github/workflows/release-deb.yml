@@ -15,7 +15,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dpkg tools
-        run: sudo apt-get install -y dpkg
+        run: sudo apt-get update && sudo apt-get install -y dpkg shellcheck bats nodejs
+
+      - name: Run release check
+        run: make release-check
 
       - name: Build .deb
         run: bash package/build-deb.sh

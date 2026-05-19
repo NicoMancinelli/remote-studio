@@ -18,6 +18,7 @@ Remote Studio manages headless Xorg display modes, device-specific scaling profi
 - [Installation](#installation)
 - [Device Profiles](#device-profiles)
 - [Usage](#usage)
+- [Status Contracts](#status-contracts)
 - [Architecture](#architecture)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
@@ -35,7 +36,7 @@ Remote Studio manages headless Xorg display modes, device-specific scaling profi
 - **Interactive TUI** — full whiptail dashboard when run without arguments; plain CLI when called with an argument
 - **Cinnamon panel applet** — live connection indicator (● Direct / ◐ Relayed), user count, warnings, and a GUI menu
 - **Automatic watch loop** — `res watch` (or the included systemd user unit) detects new RustDesk connections and applies a profile automatically
-- **Doctor & self-test** — `res doctor` checks symlinks, Xorg, RustDesk, Tailscale, renderer, and more; `res self-test` runs 9 automated checks
+- **Doctor & automation status** — `res doctor` checks symlinks, Xorg, RustDesk, Tailscale, renderer, and more; `res status --json` gives scripts a stable machine-readable snapshot
 - **Debian package** — pre-built `.deb` attached to every GitHub release; build your own with `make deb`
 
 ---
@@ -100,7 +101,9 @@ Built-in profiles are defined in [`config/profiles.conf`](config/profiles.conf):
 | Command | Device | Resolution | Scaling | Text Scale |
 | :--- | :--- | :--- | :--- | :--- |
 | `res mac` | MacBook Air 13" | 2560×1664 | 1× | 1.5 |
+| `res mac-retina` | MacBook Air 13" Retina | 3024×1964 | 1.5× | 1.2 |
 | `res mac15` | MacBook Air 15" | 2880×1864 | 1× | 1.5 |
+| `res mac15-retina` | MacBook Air 15" Retina | 3456×2234 | 1.5× | 1.2 |
 | `res ipad` | iPad Pro 11" | 2424×1664 | 2× | 1.1 |
 | `res ipad13` | iPad Pro 13" | 2064×2752 | 2× | 1.1 |
 | `res iphonel` | iPhone Landscape | 2868×1320 | 2× | 1.2 |
@@ -118,6 +121,7 @@ Add your own in `~/.config/remote-studio/profiles.conf` using the same `key=Labe
 ```bash
 # Profiles
 res mac                   # Apply MacBook Air 13" profile
+res mac-retina            # Apply MacBook Air 13" Retina profile
 res ipad                  # Apply iPad Pro 11" profile
 res custom 1920 1080      # Apply arbitrary resolution (prompts to save)
 
@@ -140,8 +144,10 @@ res xorg rollback         # Restore previous xorg.conf
 
 # Diagnostics
 res doctor                # Full system health check
+res doctor-fix            # Repair common local setup issues where possible
 res self-test             # Automated self-test (9 checks)
 res status                # Pipe-delimited stats (consumed by applet)
+res status --json         # Machine-readable status for automation/CI
 res log [N]               # Tail last N lines of the event log (default 20)
 
 # Toggles
@@ -161,6 +167,7 @@ res config show           # Print effective config (defaults + overrides)
 # Misc
 res watch [interval]      # Auto-apply profile on new RustDesk connections
 res rotate [normal|left|right|inverted]
+res profiles              # List all profiles and source files
 res update                # Pull latest and re-run install
 res version               # Print version
 res help                  # Full command reference
@@ -186,6 +193,21 @@ Run `res` with no arguments to open the whiptail dashboard:
 ```
 
 Falls back to a plain numbered text menu when the terminal is too small for whiptail.
+
+---
+
+## Status Contracts
+
+Remote Studio intentionally has two status outputs:
+
+| Contract | Consumer | Format | Path / command |
+| :--- | :--- | :--- | :--- |
+| Applet status file | Cinnamon applet | Pipe-delimited single line | `$XDG_RUNTIME_DIR/remote-studio/status`, or `/tmp/remote-studio-$UID/status` when `XDG_RUNTIME_DIR` is unavailable |
+| Automation status | Tests, scripts, CI | JSON object | `res status --json` |
+
+`res status` writes the applet file and prints the same pipe-delimited line. The applet file uses `none` for the codec field when no codec is known so the field count stays stable after trimming. `res status --json` also refreshes that file, then prints JSON with these stable top-level fields: `mode`, `temperature`, `latency`, `users`, `ram`, `warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`, `codec`, and `status_file`.
+
+The applet should continue to read the file contract. New scripts should use JSON and, when debugging stale applet state, inspect the `status_file` value reported by `res status --json`.
 
 ---
 
@@ -224,10 +246,11 @@ remote-studio/
 ├── install-remote-studio.sh      # curl-pipe-bash one-liner
 ├── Makefile
 └── docs/
-    └── quick-start.md
+    ├── quickstart.md             # Maintained new-machine quick start
+    └── quick-start.md            # Compatibility pointer to quickstart.md
 ```
 
-`res.sh` sources the `lib/` modules at startup, resolving `LIB_DIR` from the repo's own `lib/` directory (development) or `/usr/share/remote-studio/lib` (`.deb` install). The applet reads `/tmp/remote-studio/status` (written every 10 seconds by `res status`) and uses `Gio.FileMonitor` to react instantly to changes.
+`res.sh` sources the `lib/` modules at startup, resolving `LIB_DIR` from the repo's own `lib/` directory (development) or `/usr/share/remote-studio/lib` (`.deb` install). The applet reads `$XDG_RUNTIME_DIR/remote-studio/status`, falling back to `/tmp/remote-studio-$UID/status`, and uses `Gio.FileMonitor` to react instantly to changes. The file remains pipe-delimited for the applet; `res status --json` is the automation contract.
 
 ---
 
@@ -244,6 +267,7 @@ User overrides live in `~/.config/remote-studio/`:
 
 ```bash
 res config set DEFAULT_PROFILE mac      # Set default profile
+res config set DEFAULT_SESSION_PROFILE mac15  # Set session default
 res config set AUTO_SESSION true        # Auto-apply profile on connection
 res config show                         # View full effective config
 ```
@@ -265,7 +289,9 @@ Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md
 Run the test suite locally:
 
 ```bash
-make test    # shellcheck + bats
+make test           # shellcheck + bats
+make ci             # test + syntax, applet, status JSON, installer dry-run
+make release-check  # CI plus system dry-run and .deb build
 ```
 
 See [RELEASING.md](RELEASING.md) for the release workflow. Security issues — please read [SECURITY.md](SECURITY.md) first.

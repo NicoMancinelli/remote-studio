@@ -39,8 +39,35 @@ STATUS_FILE="$STATUS_DIR/status"
 }
 
 # ---- Load user config ----
-# shellcheck source=/dev/null
-[ -f "$USER_CONFIG" ] && source "$USER_CONFIG"
+load_startup_config() {
+    local file=$1 line key value
+    [ -f "$file" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+
+        key=${line%%=*}
+        value=${line#*=}
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        if [[ "$value" == \"*\" && "$value" == *\" && ${#value} -ge 2 ]]; then
+            value=${value:1:${#value}-2}
+        elif [[ "$value" == \'*\' && "$value" == *\' && ${#value} -ge 2 ]]; then
+            value=${value:1:${#value}-2}
+        fi
+
+        case "$key" in
+            DEFAULT_PROFILE) DEFAULT_PROFILE=$value ;;
+            DEFAULT_SESSION_PROFILE) DEFAULT_SESSION_PROFILE=$value ;;
+            DEFAULT_RUSTDESK_PRESET) DEFAULT_RUSTDESK_PRESET=$value ;;
+            AUTO_SESSION) AUTO_SESSION=$value ;;
+        esac
+    done < "$file"
+}
+load_startup_config "$USER_CONFIG"
 DEFAULT_PROFILE="${DEFAULT_PROFILE:-mac}"
 DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 # DEFAULT_SESSION_PROFILE overrides DEFAULT_PROFILE specifically for session start.
@@ -97,7 +124,13 @@ if [ -n "${1:-}" ]; then
                 fi
             fi
             ;;
-        status) show_status ;;
+        status)
+            if [ "${2:-}" = "--json" ]; then
+                show_status json
+            else
+                show_status
+            fi
+            ;;
         info) show_info ;;
         log) show_log "${2:-20}" ;;
         doctor) show_doctor ;;
@@ -160,7 +193,7 @@ while true; do
     _m=$(get_current_mode)
     _r=$(get_current_resolution)
     _t=$(get_tailnet_ip)
-    _u=$(ss -tnp 2>/dev/null | grep -ic "rustdesk.*ESTAB" || true)
+    _u=$(ss -tnp 2>/dev/null | awk '/ESTAB/ && /rustdesk/ {count++} END {print count + 0}')
     _wdata=$(get_warning_summary_cached); _w=${_wdata%%|*}
     
     # Adjust whiptail height to fit terminal but cap at 24

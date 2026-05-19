@@ -4,6 +4,7 @@
 # Requires: dpkg-deb (standard on Debian/Ubuntu/Linux Mint)
 
 set -euo pipefail
+umask 022
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -51,21 +52,36 @@ copy_file() {
     chmod "$mode" "$dst"
 }
 
-# /usr/local/bin/res
-copy_file "$ROOT_DIR/res.sh" "$PKG_DIR/usr/local/bin/res" 0755
+copy_config() {
+    local name=$1 mode=${2:-0644}
+    copy_file "$ROOT_DIR/config/$name" "$PKG_DIR/usr/share/remote-studio/config/$name" "$mode"
+    copy_file "$ROOT_DIR/config/$name" "$PKG_DIR/usr/share/remote-studio/$name" "$mode"
+}
+
+# Main application tree. Keep res.sh under /usr/share/remote-studio so ROOT_DIR
+# resolves beside config/, lib/, applet/, and install.sh after package install.
+copy_file "$ROOT_DIR/res.sh" "$PKG_DIR/usr/share/remote-studio/res.sh" 0755
+copy_file "$ROOT_DIR/install.sh" "$PKG_DIR/usr/share/remote-studio/install.sh" 0755
+mkdir -p "$PKG_DIR/usr/local/bin"
+ln -s /usr/share/remote-studio/res.sh "$PKG_DIR/usr/local/bin/res"
 
 # Cinnamon applet
-copy_file "$ROOT_DIR/applet/applet.js"    "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/applet.js"    0644
+copy_file "$ROOT_DIR/applet/applet.js" "$PKG_DIR/usr/share/remote-studio/applet/applet.js" 0644
+copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/remote-studio/applet/metadata.json" 0644
+copy_file "$ROOT_DIR/applet/applet.js" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/applet.js" 0644
 copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/metadata.json" 0644
 
-# Shared data — config templates
-copy_file "$ROOT_DIR/config/profiles.conf"          "$PKG_DIR/usr/share/remote-studio/profiles.conf"          0644
-copy_file "$ROOT_DIR/config/remote-studio.conf.example" "$PKG_DIR/usr/share/remote-studio/remote-studio.conf.example" 0644
-copy_file "$ROOT_DIR/config/RustDesk_default.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_default.toml"  0644
-copy_file "$ROOT_DIR/config/RustDesk_balanced.toml" "$PKG_DIR/usr/share/remote-studio/RustDesk_balanced.toml" 0644
-copy_file "$ROOT_DIR/config/RustDesk_quality.toml"  "$PKG_DIR/usr/share/remote-studio/RustDesk_quality.toml"  0644
-copy_file "$ROOT_DIR/config/RustDesk_speed.toml"    "$PKG_DIR/usr/share/remote-studio/RustDesk_speed.toml"    0644
-copy_file "$ROOT_DIR/config/xorg.conf"              "$PKG_DIR/usr/share/remote-studio/xorg.conf"              0644
+# Shared data — config templates. The config/ copies keep package installs
+# source-layout compatible; the flat copies preserve older fallback paths.
+copy_config profiles.conf
+copy_config remote-studio.conf.example
+copy_config RustDesk_default.toml
+copy_config RustDesk_balanced.toml
+copy_config RustDesk_quality.toml
+copy_config RustDesk_speed.toml
+copy_config RustDesk2.options.toml
+copy_config xorg.conf
+copy_config xsessionrc
 
 # Library modules
 for libfile in "$ROOT_DIR/lib/"*.sh; do
@@ -107,6 +123,8 @@ cat > "$PKG_DIR/DEBIAN/postinst" <<'POSTINST'
 set -e
 
 chmod 755 /usr/local/bin/res
+chmod 755 /usr/share/remote-studio/res.sh
+chmod 755 /usr/share/remote-studio/install.sh
 
 echo ""
 echo "Remote Studio installed successfully."
@@ -119,7 +137,7 @@ chmod 0755 "$PKG_DIR/DEBIAN/postinst"
 # Build
 # ---------------------------------------------------------------------------
 mkdir -p "$ROOT_DIR/dist"
-dpkg-deb --build "$PKG_DIR" "$DEB_OUT"
+dpkg-deb --root-owner-group --build "$PKG_DIR" "$DEB_OUT"
 
 echo ""
 echo "Package built: $DEB_OUT"

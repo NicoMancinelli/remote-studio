@@ -30,9 +30,9 @@ Leave a fresh `## [Unreleased]` section at the top.
 
 ### 3. Run the test suite
 
-    make test
+    make release-check
 
-This runs `shellcheck` and the `bats` suite. Both must pass.
+This runs the local CI suite, installer dry-runs, and a Debian package build. Everything must pass.
 
 ### 4. Commit and tag
 

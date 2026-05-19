@@ -89,7 +89,15 @@ get_stats() {
     IP_ADDR=$(get_primary_ip)
     TEMP=$(sensors 2>/dev/null | grep "Package id 0" | awk '{print $4}' | tr -d '+')
     RAM=$(free -m | awk 'NR==2{printf "%.1f%%", $3*100/$2 }')
-    USERS=$(ss -tnp 2>/dev/null | awk '/ESTAB/ && /rustdesk/{print $5}' | cut -d: -f1 | sort -u | wc -l)
+    USERS=$(ss -tnp 2>/dev/null | awk '
+        function host(addr) {
+            sub(/^\[/, "", addr)
+            sub(/\]:[0-9]+$/, "", addr)
+            sub(/:[0-9]+$/, "", addr)
+            return addr
+        }
+        /ESTAB/ && /rustdesk/ { print host($5) }
+    ' | sort -u | wc -l)
 
     # Connection Path Detection
     if [ "$USERS" -gt 0 ]; then

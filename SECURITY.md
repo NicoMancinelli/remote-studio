@@ -15,7 +15,10 @@ Please include:
 
 - A description of the vulnerability
 - Steps to reproduce
+- Affected command, installer path, applet action, or package hook
 - Suggested fix if you have one
+
+Do not include RustDesk passwords, Tailscale auth keys, private keys, or full credential-bearing config files in the report. Redact logs before attaching them.
 
 You should expect a response within 5 business days. If the vulnerability is confirmed:
 
