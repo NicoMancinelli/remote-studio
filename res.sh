@@ -5,7 +5,7 @@
 set -uo pipefail
 IFS=$' \n\t'
 
-VERSION="8.2"
+VERSION="9.0"
 
 # ---- Resolve script root and library directory ----
 ROOT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -211,6 +211,7 @@ while true; do
         "tailnet"     "Tailscale Network" \
         "system"      "System & Tools" \
         "dashboard"   "Live Dashboard" \
+        "daemon"      "Daemon Control" \
         "help"        "Help" \
         "exit"        "Quit" \
         3>&1 1>&2 2>&3) || exit 0
@@ -222,6 +223,7 @@ while true; do
         tailnet)     tui_tailnet ;;
         system)      tui_system ;;
         dashboard)   tui_dashboard ;;
+        daemon)      tui_daemon ;;
         help)        run_panel_command "Help" show_help ;;
         exit)        exit 0 ;;
     esac

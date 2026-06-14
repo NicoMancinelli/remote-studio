@@ -1,0 +1,30 @@
+{
+    "layout": {
+        "type": "layout",
+        "keys": ["default_profile", "auto_session", "notify_enabled"]
+    },
+    "default_profile": {
+        "type": "combobox",
+        "default": "mac",
+        "description": "Default Session Profile",
+        "options": {
+            "Mac (2560x1664)": "mac",
+            "Mac 15\" (2880x1864)": "mac15",
+            "iPad Pro 13\" (2064x2752)": "ipad13",
+            "iPad Pro 11\" (1668x2388)": "ipad",
+            "iPhone Portrait (1170x2532)": "iphonep",
+            "iPhone Landscape (2532x1170)": "iphonel",
+            "Standard Reset (1024x768)": "fallback"
+        }
+    },
+    "auto_session": {
+        "type": "checkbox",
+        "default": false,
+        "description": "Automatically start default session upon connection"
+    },
+    "notify_enabled": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Enable connect/disconnect desktop notifications"
+    }
+}

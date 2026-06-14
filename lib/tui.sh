@@ -638,3 +638,22 @@ show_text_menu() {
         esac
     done
 }
+
+
+tui_daemon() {
+    local choice d_st
+    while true; do
+        tui_get_dims
+        d_st=$(systemctl --user is-active remote-studio 2>/dev/null || echo "inactive")
+        choice=$(whiptail --title "Daemon Control"             --menu "Manage the Python DBus Daemon [${d_st}]"             "$T_LINES" "$T_COLS" "$T_MENU"             "status"  "Daemon Status"             "start"   "Start Daemon"             "stop"    "Stop Daemon"             "restart" "Restart Daemon"             "log"     "View Daemon Log"             "back"    "Return"             3>&1 1>&2 2>&3) || return 0
+        case "$choice" in
+            back) return 0 ;;
+            status) run_panel_command "Daemon Status" systemctl --user status remote-studio ;;
+            start)  run_panel_command "Start Daemon" systemctl --user start remote-studio ;;
+            stop)   run_panel_command "Stop Daemon" systemctl --user stop remote-studio ;;
+            restart) run_panel_command "Restart Daemon" systemctl --user restart remote-studio ;;
+            log) run_panel_command "Daemon Log" journalctl --user -u remote-studio -n 50 --no-pager ;;
+        esac
+    done
+}
+

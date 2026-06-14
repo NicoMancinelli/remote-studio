@@ -17,20 +17,41 @@ Three components working in sync:
 ## Project Layout
 
 ```
-~/dev/remote-studio/
-    res.sh              # Main engine, TUI, and CLI
-    REMOTE_STUDIO.md    # This file
-    .gitignore
+remote-studio/
+    res.sh              # Entrypoint: CLI dispatch + TUI main loop
+    lib/
+        core.sh         # Colors, logging, profile loading, state, caching
+        engine.sh       # Display engine, sessions, actions, xorg generation
+        diagnostics.sh  # Doctor, self-test, info, status, log
+        services.sh     # Tailscale and RustDesk service helpers
+        config.sh       # Config get/set, init wizard, help, update
+        tui.sh          # All whiptail TUI panels and menus
     applet/
-        applet.js       # Cinnamon panel applet
+        applet.js       # Cinnamon panel applet (GJS)
         metadata.json   # Applet metadata
     config/
-        xsessionrc      # Display restore on login
-        profiles.conf   # Built-in device profiles
-        xorg.conf       # Headless Xorg dummy display config
-        RustDesk_default.toml
-        RustDesk2.options.toml
-    install.sh          # Symlink and optional system config installer
+        profiles.conf           # Built-in device profiles (7 entries)
+        xorg.conf               # Static dummy driver Xorg config
+        xsessionrc              # Login-time display restore script
+        RustDesk_default.toml   # Balanced RustDesk preset
+        RustDesk_balanced.toml  # Balanced preset (alias)
+        RustDesk_quality.toml   # High quality preset
+        RustDesk_speed.toml     # Low bandwidth preset
+        RustDesk2.options.toml  # RustDesk options (no identity)
+        remote-studio.service  # Systemd user unit
+        logrotate.d/remote-studio    # System logrotate config
+    tests/
+        test_profiles.bats      # Profile format and CLI tests
+        test_config.bats        # Config loading and session tests
+        test_log.bats           # Log subcommand tests
+        helpers/
+            mock_commands.bash  # Mock stubs for display/network tools
+    package/
+        build-deb.sh    # Debian package builder
+    install.sh          # Installer (install, system, doctor, backup, rollback, uninstall)
+    install-remote-studio.sh  # curl-pipe-bash one-liner installer
+    Makefile            # install, doctor, test, release, deb targets
+    profiles.conf.example     # User profile template
 ```
 
 ## Symlinks
@@ -107,7 +128,7 @@ Run `res` with no arguments to open the dashboard. The TUI is organized around t
 *   Device profiles are loaded from `config/profiles.conf`, then overridden by `~/.config/remote-studio/profiles.conf`.
 *   `res xorg` generates Xorg modelines from the same profile definitions used by `res mac` and the applet.
 *   `res doctor` is the first place to check drift between symlinks, RustDesk, Tailscale, Xorg, and the active renderer.
-*   `res status` returns: `Mode | Temp | Ping | Users | RAM | WarningCount | WarningText | Traffic | IP`
+*   `res status` returns: `Mode | Temp | Ping | Users | RAM | WarningCount | WarningText | Traffic | IP | ConnType | Resolution | DirectAddress`
 *   Use `-symbolic` icons in the applet, emojis in the TUI.
 *   The applet rebuilds its menu on click to reflect current mode (checkmark indicator).
 *   The TUI falls back to a plain text menu when the terminal is too small for whiptail.
@@ -122,6 +143,7 @@ Profiles are defined in `config/profiles.conf` with the format `key=label|width|
 | `mac` | MacBook Air 13" | 2560×1664 | 1x | 1.5 |
 | `mac15` | MacBook Air 15" | 2880×1864 | 1x | 1.5 |
 | `ipad` | iPad Pro 11" | 2424×1664 | 2x | 1.1 |
+| `ipad13` | iPad Pro 13" | 2064×2752 | 2x | 1.1 |
 | `iphonel` | iPhone Landscape | 2868×1320 | 2x | 1.2 |
 | `iphonep` | iPhone Portrait | 1320×2868 | 2x | 1.2 |
 

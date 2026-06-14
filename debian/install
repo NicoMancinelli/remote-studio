@@ -1,0 +1,8 @@
+res.sh usr/share/remote-studio/
+lib/* usr/share/remote-studio/lib/
+daemon/* usr/share/remote-studio/daemon/
+config/* usr/share/remote-studio/config/
+install.sh usr/share/remote-studio/
+
+applet/* usr/share/cinnamon/applets/remote-studio@neek/
+systemd/remote-studio.service usr/lib/systemd/user/

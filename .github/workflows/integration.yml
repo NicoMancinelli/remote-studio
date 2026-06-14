@@ -52,7 +52,7 @@ jobs:
 
       - name: Verify systemd unit syntax
         run: |
-          sudo systemd-analyze verify /usr/lib/systemd/user/remote-studio-watch.service || true
+          sudo systemd-analyze verify /usr/lib/systemd/user/remote-studio.service || true
 
       - name: Verify logrotate config syntax
         run: sudo logrotate -d /etc/logrotate.d/remote-studio

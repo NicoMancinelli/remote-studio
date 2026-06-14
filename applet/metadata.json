@@ -2,5 +2,6 @@
     "uuid": "remote-studio@neek",
     "name": "Remote Studio",
     "description": "Quickly switch resolutions and optimize for RustDesk",
-    "icon": "video-display"
+    "icon": "video-display",
+    "version": "8.1"
 }

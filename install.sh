@@ -121,6 +121,24 @@ install_user() {
         echo "  Skipped  $RUSTDESK_DIR/RustDesk_default.toml (already exists)"
     fi
 
+
+    if ! python3 -c 'import websockets, gi' 2>/dev/null; then
+        echo "  Warning: Python dependencies not found. The daemon may fail to start."
+        echo "  Run: sudo apt install python3-websockets python3-gi"
+    fi
+
+    if [ -f "$ROOT_DIR/systemd/remote-studio.service" ]; then
+        run mkdir -p "$HOME/.config/systemd/user"
+        if [ "$DRY_RUN" == "true" ]; then
+            echo "[DRY-RUN] sed 's|/usr/share/remote-studio|$ROOT_DIR|g' $ROOT_DIR/systemd/remote-studio.service > $HOME/.config/systemd/user/remote-studio.service"
+        else
+            sed "s|/usr/share/remote-studio|$ROOT_DIR|g" "$ROOT_DIR/systemd/remote-studio.service" > "$HOME/.config/systemd/user/remote-studio.service"
+        fi
+        run systemctl --user daemon-reload
+        run systemctl --user enable --now remote-studio.service
+        echo "  Enabled  systemd user service: remote-studio.service"
+    fi
+
     echo ""
     echo "Remote Studio user install complete."
 }

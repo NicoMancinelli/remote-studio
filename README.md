@@ -235,7 +235,7 @@ remote-studio/
 │   ├── RustDesk_quality.toml
 │   ├── RustDesk_speed.toml
 │   ├── logrotate.d/remote-studio
-│   └── remote-studio-watch.service   # Systemd user unit for watch loop
+│   └── remote-studio.service   # Systemd user unit for watch loop
 ├── tests/
 │   ├── test_profiles.bats
 │   ├── test_config.bats

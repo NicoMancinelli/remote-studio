@@ -1,0 +1,9 @@
+remote-studio (9.0-1) unstable; urgency=medium
+
+  * Initial Debian package release for Remote Studio v9.0.
+  * Added systemd background daemon.
+  * Added multi-monitor TUI support.
+  * Applet refactored to use native Settings and Gio.FileMonitor.
+  * Tailscale integration for secure auto-sessions.
+
+ -- Nico <nico@example.com>  Sat, 13 Jun 2026 12:00:00 -0400

@@ -88,11 +88,20 @@ for libfile in "$ROOT_DIR/lib/"*.sh; do
     copy_file "$libfile" "$PKG_DIR/usr/share/remote-studio/lib/$(basename "$libfile")" 0644
 done
 
+# Daemon and Web UI
+mkdir -p "$PKG_DIR/usr/share/remote-studio/daemon"
+cp "$ROOT_DIR/daemon/"*.py "$PKG_DIR/usr/share/remote-studio/daemon/"
+chmod 0755 "$PKG_DIR/usr/share/remote-studio/daemon/"*.py
+
+mkdir -p "$PKG_DIR/usr/share/remote-studio/web"
+cp -r "$ROOT_DIR/web/"* "$PKG_DIR/usr/share/remote-studio/web/"
+find "$PKG_DIR/usr/share/remote-studio/web/" -type f -exec chmod 0644 {} \;
+
 # Logrotate config
 copy_file "$ROOT_DIR/config/logrotate.d/remote-studio" "$PKG_DIR/etc/logrotate.d/remote-studio" 0644
 
 # Systemd user unit
-copy_file "$ROOT_DIR/config/remote-studio-watch.service" "$PKG_DIR/usr/lib/systemd/user/remote-studio-watch.service" 0644
+copy_file "$ROOT_DIR/systemd/remote-studio.service" "$PKG_DIR/usr/lib/systemd/user/remote-studio.service" 0644
 
 # ---------------------------------------------------------------------------
 # DEBIAN/control
@@ -104,7 +113,7 @@ Package: $PACKAGE
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: bash, x11-xserver-utils, whiptail, cinnamon
+Depends: bash, x11-xserver-utils, whiptail, cinnamon, python3, python3-gi, python3-websockets
 Recommends: tailscale, rustdesk
 Section: misc
 Priority: optional

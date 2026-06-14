@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(shellcheck res.sh)",
+      "Bash(shellcheck -f gcc res.sh)",
+      "Bash(bash package/build-deb.sh)",
+      "Bash(shellcheck --format=gcc res.sh)",
+      "Bash(bash /Users/nico/.openclaw/hooks/shellcheck-on-edit.sh \"/Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/install.sh\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(shellcheck \"/Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/install.sh\")",
+      "Bash(bash -n tests/test_profiles.bats)",
+      "Bash(bash -n tests/test_config.bats)",
+      "Bash(bash -n tests/test_log.bats)"
+    ]
+  }
+}

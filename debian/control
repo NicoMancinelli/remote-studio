@@ -1,0 +1,13 @@
+Source: remote-studio
+Section: utils
+Priority: optional
+Maintainer: Nico <nico@example.com>
+Build-Depends: debhelper (>= 10)
+Standards-Version: 4.1.4
+
+Package: remote-studio
+Architecture: all
+Depends: ${misc:Depends}, bash, x11-xserver-utils, whiptail, python3, python3-gi, python3-websockets
+Description: Remote Studio headless remote access suite.
+ Enhances RustDesk connections by applying correct display
+ resolutions, adjusting UI scaling, and managing power profiles.
