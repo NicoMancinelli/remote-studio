@@ -20,7 +20,7 @@ Remote Studio is a display management suite for Linux Mint (Cinnamon) that optim
 - **TUI/CLI Dual Mode:** Uses `whiptail` for an interactive dashboard but provides a clean CLI for automation.
 - **State Management:** Tracks applied modes in `~/.res_state`.
 - **Status Exports:** Writes pipe-delimited applet data to `$XDG_RUNTIME_DIR/remote-studio/status` or `/tmp/remote-studio-$UID/status`; `res status --json` prints a JSON snapshot for scripts.
-- **Status JSON Fields:** `mode`, `temperature`, `latency`, `users`, `ram`, `warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`, `codec`, and `status_file`.
+- **Status JSON Fields:** `mode`, `temperature`, `latency`, `users`, `ram`, `warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`, `codec`, `fps`, `bitrate`, `toggles`, and `status_file`.
 
 ### 2. The Cinnamon Applet (`applet/`)
 - **Integration:** Symlinked to `~/.local/share/cinnamon/applets/remote-studio@neek/`.

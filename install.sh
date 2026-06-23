@@ -98,6 +98,7 @@ install_user() {
 
     run ln -sfn "$ROOT_DIR/applet/applet.js" "$APPLET_DIR/applet.js"
     run ln -sfn "$ROOT_DIR/applet/metadata.json" "$APPLET_DIR/metadata.json"
+    run ln -sfn "$ROOT_DIR/applet/settings-schema.json" "$APPLET_DIR/settings-schema.json"
     echo "  Linked   $APPLET_DIR/"
 
     if [ ! -f "$CONFIG_DIR/profiles.conf" ]; then
@@ -158,6 +159,7 @@ uninstall_user() {
     [ "$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)" = "$ROOT_DIR/config/xsessionrc" ] && run rm -f "$HOME/.xsessionrc"
     [ "$(readlink -f "$APPLET_DIR/applet.js" 2>/dev/null)" = "$ROOT_DIR/applet/applet.js" ] && run rm -f "$APPLET_DIR/applet.js"
     [ "$(readlink -f "$APPLET_DIR/metadata.json" 2>/dev/null)" = "$ROOT_DIR/applet/metadata.json" ] && run rm -f "$APPLET_DIR/metadata.json"
+    [ "$(readlink -f "$APPLET_DIR/settings-schema.json" 2>/dev/null)" = "$ROOT_DIR/applet/settings-schema.json" ] && run rm -f "$APPLET_DIR/settings-schema.json"
     echo "Remote Studio user links removed."
 }
 

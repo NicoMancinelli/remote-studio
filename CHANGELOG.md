@@ -8,6 +8,10 @@
 - Bats coverage for JSON status output and applet status file preservation.
 - GitHub Actions now exercise the same local test/release-check targets used for handoff.
 - Debian package builds now force root-owned archive entries instead of preserving the local build user.
+- Cinnamon applet settings dialog (`settings-schema.json`) for default profile, auto-session, and notification preferences.
+- Applet live status header, active peer list, text scaling slider, and menu item tooltips.
+- Status surfaces now include FPS, bitrate, and toggle states (speed, caffeine, theme, night).
+- Applet recent profiles quick-pick, display rotation controls, and RustDesk log/status shortcuts.
 
 ### Fixed
 - `make test` now fails when ShellCheck fails instead of reporting lint as skipped.
@@ -20,6 +24,8 @@
 - Config sample now documents `DEFAULT_SESSION_PROFILE` and `AUTO_SESSION`.
 
 ### Changed
+- Cinnamon applet menu uses symbolic-first labels (no emojis), shows codec in the panel label during active sessions, and refreshes live while open.
+- `res status` / `res status --json` now include FPS, bitrate, and toggle states for applet and automation consumers.
 - AI handoff, roadmap, contributing, release, and quick-start docs now reflect the current split-module architecture and validation commands.
 - README and quick-start docs now document the maintained status contracts, fallback status path, and all built-in profiles.
 - `docs/quick-start.md` now points to `docs/quickstart.md` instead of carrying a second quick-start flow.

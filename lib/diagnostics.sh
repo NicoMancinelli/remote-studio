@@ -161,7 +161,7 @@ doctor_fix() {
     local applet_target="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
     echo "Fixing common issues..."
     [ "$(readlink -f "$HOME/.xsessionrc")" != "$ROOT_DIR/config/xsessionrc" ] && ln -sf "$ROOT_DIR/config/xsessionrc" "$HOME/.xsessionrc"
-    mkdir -p "$applet_target"; for f in applet.js metadata.json; do [ "$(readlink -f "$applet_target/$f")" != "$ROOT_DIR/applet/$f" ] && ln -sf "$ROOT_DIR/applet/$f" "$applet_target/$f"; done
+    mkdir -p "$applet_target"; for f in applet.js metadata.json settings-schema.json; do [ "$(readlink -f "$applet_target/$f")" != "$ROOT_DIR/applet/$f" ] && ln -sf "$ROOT_DIR/applet/$f" "$applet_target/$f"; done
     [ ! -f "$HOME/.config/rustdesk/RustDesk_default.toml" ] && { mkdir -p "$HOME/.config/rustdesk"; cp "$ROOT_DIR/config/RustDesk_default.toml" "$HOME/.config/rustdesk/RustDesk_default.toml"; }
     echo "Done."
 }
@@ -233,9 +233,31 @@ json_escape() {
     printf '%s' "$s"
 }
 
+# Parse codec/fps/bitrate from the RustDesk log (compact values for status surfaces).
+get_rustdesk_media_stats() {
+    RD_CODEC=""; RD_FPS=""; RD_BITRATE=""
+    [ "${USERS:-0}" -le 0 ] && return 0
+
+    local log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
+    [ -f "$log_file" ] || log_file="$HOME/.rustdesk/log/rustdesk.log"
+    [ -f "$log_file" ] || return 0
+
+    local last50 codec_line fps_line bitrate_line
+    last50=$(tail -n 50 "$log_file" 2>/dev/null)
+    codec_line=$(printf '%s' "$last50" | grep -i 'codec'   | tail -1)
+    fps_line=$(printf '%s' "$last50"   | grep -i 'fps'     | tail -1)
+    bitrate_line=$(printf '%s' "$last50"| grep -i 'bitrate' | tail -1)
+
+    RD_CODEC=$(printf '%s' "$codec_line" | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true)
+    RD_FPS=$(printf '%s' "$fps_line" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1 || true)
+    RD_BITRATE=$(printf '%s' "$bitrate_line" | grep -oE '[0-9.]+[[:space:]]*[KMG]?bps|[0-9.]+[[:space:]]*[KMG]?B/s' | head -1 \
+        | tr -d '[:space:]' || true)
+}
+
 show_status() {
     local format=${1:-text}
     local cur net warning_data warning_count warning_text line res tailnet_ip lan_ip combined_ip rustdesk_direct
+    local pipe_codec pipe_fps pipe_bitrate pipe_toggles
     get_stats; net=$(get_net_speed); cur=$(get_current_mode); res=$(get_current_resolution)
     warning_data=$(get_warning_summary); warning_count=${warning_data%%|*}; warning_text=${warning_data#*|}
     tailnet_ip=$(get_tailnet_ip)
@@ -249,16 +271,13 @@ show_status() {
     fi
     mkdir -p "$STATUS_DIR"
     check_auto_speed
-    # Codec field (index 12): last codec seen in RustDesk log, empty when no session
-    local rd_codec=""
-    if [ "$USERS" -gt 0 ]; then
-        local _log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
-        [ -f "$_log_file" ] || _log_file="$HOME/.rustdesk/log/rustdesk.log"
-        [ -f "$_log_file" ] && rd_codec=$(grep -i 'codec' "$_log_file" 2>/dev/null | tail -1 \
-            | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true)
-    fi
-    local pipe_codec="${rd_codec:-none}"
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $pipe_codec"
+    get_rustdesk_media_stats
+    get_toggle_states
+    pipe_codec="${RD_CODEC:-none}"
+    pipe_fps="${RD_FPS:-none}"
+    pipe_bitrate="${RD_BITRATE:-none}"
+    pipe_toggles="speed=${S_ST};caffeine=${C_ST};theme=${T_ST};night=${N_ST}"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $pipe_codec | $pipe_fps | $pipe_bitrate | $pipe_toggles"
     printf '%s\n' "$line" > "$STATUS_FILE"
 
     if [ "$format" = "json" ]; then
@@ -274,7 +293,11 @@ show_status() {
         printf '"connection":"%s",' "$(json_escape "$RUSTDESK_CONN_TYPE")"
         printf '"resolution":"%s",' "$(json_escape "$res")"
         printf '"direct_address":"%s",' "$(json_escape "$rustdesk_direct")"
-        printf '"codec":"%s",' "$(json_escape "$rd_codec")"
+        printf '"codec":"%s",' "$(json_escape "$RD_CODEC")"
+        printf '"fps":"%s",' "$(json_escape "$RD_FPS")"
+        printf '"bitrate":"%s",' "$(json_escape "$RD_BITRATE")"
+        printf '"toggles":{"speed":"%s","caffeine":"%s","theme":"%s","night":"%s"},' \
+            "$(json_escape "$S_ST")" "$(json_escape "$C_ST")" "$(json_escape "$T_ST")" "$(json_escape "$N_ST")"
         printf '"status_file":"%s"' "$(json_escape "$STATUS_FILE")"
         printf '}\n'
     else

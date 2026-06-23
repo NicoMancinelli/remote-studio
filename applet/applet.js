@@ -1,5 +1,6 @@
 const Applet    = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
+const Settings  = imports.ui.settings;
 const Util      = imports.misc.util;
 const GLib      = imports.gi.GLib;
 const Gio       = imports.gi.Gio;
@@ -7,6 +8,7 @@ const St        = imports.gi.St;
 
 const RES_CMD     = "/usr/local/bin/res";
 const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || GLib.get_user_runtime_dir();
+
 function _fallbackUid() {
     let envUid = GLib.getenv("UID") || GLib.getenv("EUID");
     if (envUid) return envUid;
@@ -20,8 +22,8 @@ const STATUS_DIR  = (RUNTIME_DIR && GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS
     : "/tmp/remote-studio-" + FALLBACK_UID;
 const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE  = GLib.get_home_dir() + "/.res_state";
+const RECENT_PROFILES_FILE = GLib.get_home_dir() + "/.config/remote-studio/recent_profiles";
 
-// Resolve profiles.conf from the res symlink; fall back to .deb install path
 function _safeReadLink(path) {
     try {
         return GLib.file_read_link(path, null);
@@ -50,11 +52,7 @@ const MODE_ICONS = {
 
 const MAX_PANEL_LABEL = 28;
 
-// Per-session open/closed state for each submenu group.
-// "presets" starts open — most common action is one click away.
 const _groupOpen = { presets: true, performance: false, rustdesk: false, system: false };
-
-// ── Applet ────────────────────────────────────────────────────────────────────
 
 function MyApplet(metadata, orientation, panel_height, instance_id) {
     this._init(metadata, orientation, panel_height, instance_id);
@@ -75,17 +73,28 @@ MyApplet.prototype = {
         this.menuManager.addMenu(this.menu);
 
         this.lastUserCount  = 0;
+        this._lastStatus    = null;
         this._timeout       = null;
         this._fileMonitor   = null;
-        this._notifyEnabled = true;
         this._refreshInFlight = false;
+
+        this.settings = new Settings.AppletSettings(this, metadata.uuid, instance_id);
+        this.settings.bind("default_profile", "defaultProfile", this._onSettingsChanged);
+        this.settings.bind("auto_session", "autoSession", this._onSettingsChanged);
+        this.settings.bind("notify_enabled", "_notifyEnabled", this._buildMenu);
 
         this._scheduleUpdate();
         this._setupFileWatch();
         this._buildMenu();
     },
 
-    // ── Status refresh ────────────────────────────────────────────────────────
+    _onSettingsChanged: function() {
+        let profile = this.defaultProfile || "mac";
+        Util.spawn([RES_CMD, "config", "set", "DEFAULT_SESSION_PROFILE", profile]);
+        Util.spawn([RES_CMD, "config", "set", "DEFAULT_PROFILE", profile]);
+        Util.spawn([RES_CMD, "config", "set", "AUTO_SESSION", this.autoSession ? "true" : "false"]);
+        if (this.menu && this.menu.isOpen) this._buildMenu();
+    },
 
     _scheduleUpdate: function() {
         if (this._timeout) GLib.source_remove(this._timeout);
@@ -138,8 +147,6 @@ MyApplet.prototype = {
         } catch(e) { /* polling fallback via _scheduleUpdate */ }
     },
 
-    // ── State readers ─────────────────────────────────────────────────────────
-
     _getCurrentMode: function() {
         try {
             let [ok, buf] = GLib.file_get_contents(STATE_FILE);
@@ -148,30 +155,42 @@ MyApplet.prototype = {
         return "";
     },
 
-    _getDirectAddress: function() {
-        try {
-            let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
-            if (ok) {
-                let status = this._parseStatus(buf.toString());
-                return status ? status.direct : null;
-            }
-        } catch(e) {}
-        return null;
-    },
-
-    // Read DEFAULT_PROFILE from the user config file (falls back to "mac")
-    _getDefaultProfile: function() {
+    _getSessionProfile: function() {
+        if (this.defaultProfile) return this.defaultProfile;
         try {
             let f = GLib.get_home_dir() + "/.config/remote-studio/remote-studio.conf";
             if (GLib.file_test(f, GLib.FileTest.EXISTS)) {
                 let [ok, buf] = GLib.file_get_contents(f);
-                if (ok) { let m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m); if (m) return m[1].trim(); }
+                if (ok) {
+                    let m = buf.toString().match(/^DEFAULT_SESSION_PROFILE=(.+)$/m);
+                    if (m) return m[1].trim();
+                    m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m);
+                    if (m) return m[1].trim();
+                }
             }
         } catch(e) {}
         return "mac";
     },
 
-    // ── Panel label / icon ────────────────────────────────────────────────────
+    _parseToggles: function(raw) {
+        let toggles = { speed: "OFF", caffeine: "OFF", theme: "Light", night: "OFF" };
+        if (!raw) return toggles;
+        raw.split(";").forEach(part => {
+            let eq = part.indexOf("=");
+            if (eq === -1) return;
+            let key = part.slice(0, eq).trim();
+            let val = part.slice(eq + 1).trim();
+            if (key === "speed") toggles.speed = val;
+            else if (key === "caffeine") toggles.caffeine = val;
+            else if (key === "theme") toggles.theme = val;
+            else if (key === "night") toggles.night = val;
+        });
+        return toggles;
+    },
+
+    _toggleSuffix: function(state, onLabel, offLabel) {
+        return " [" + (state === "ON" || state === "Dark" ? onLabel : offLabel) + "]";
+    },
 
     _iconForMode: function(modeName) {
         for (let k in MODE_ICONS) { if (modeName.indexOf(k) !== -1) return MODE_ICONS[k]; }
@@ -183,7 +202,7 @@ MyApplet.prototype = {
         text = (text || "").trim();
         if (text.length <= maxLength) return text;
         if (maxLength <= 1) return text.slice(0, maxLength);
-        return text.slice(0, maxLength - 1).trim() + "…";
+        return text.slice(0, maxLength - 1).trim() + "\u2026";
     },
 
     _compactModeLabel: function(label) {
@@ -191,17 +210,52 @@ MyApplet.prototype = {
         return this._ellipsize(label, MAX_PANEL_LABEL);
     },
 
+    _shortCodec: function(codec) {
+        if (!codec) return "";
+        let c = codec.toUpperCase();
+        if (c.indexOf("H265") !== -1 || c.indexOf("HEVC") !== -1) return "H265";
+        if (c.indexOf("H264") !== -1 || c.indexOf("AVC") !== -1) return "H264";
+        if (c.indexOf("VP9") !== -1) return "VP9";
+        if (c.indexOf("VP8") !== -1) return "VP8";
+        if (c.indexOf("AV1") !== -1) return "AV1";
+        return codec.length > 6 ? codec.slice(0, 6) : codec;
+    },
+
     _panelLabel: function(status) {
-        let dot = status.users > 0 ? (status.connType === "Direct" ? "● " : "◐ ") : "";
-        let alert = status.warnings > 0 ? "⚠ " : "";
-        let uc = status.users > 0 ? " 👥" + status.users : "";
-        let base = alert + dot + this._compactModeLabel(status.label) + uc;
+        let dot = status.users > 0 ? (status.connType === "Direct" ? "\u25cf " : "\u25d0 ") : "";
+        let alert = status.warnings > 0 ? "! " : "";
+        let users = status.users > 0 ? " \u00d7" + status.users : "";
+        let codec = (status.users > 0 && status.codec) ? " " + this._shortCodec(status.codec) : "";
+        let fps = (status.users > 0 && status.fps) ? "@" + status.fps : "";
+        let mode = this._compactModeLabel(status.label);
+        let base = alert + dot + mode + codec + fps + users;
 
         if (base.length > MAX_PANEL_LABEL) {
-            let reserved = alert.length + dot.length + uc.length;
-            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), MAX_PANEL_LABEL - reserved) + uc;
+            let reserved = alert.length + dot.length + users.length + codec.length + fps.length;
+            base = alert + dot + this._ellipsize(mode, Math.max(4, MAX_PANEL_LABEL - reserved)) + codec + fps + users;
         }
         return base;
+    },
+
+    _statusObject: function(fields) {
+        return {
+            label: fields.label,
+            temp: fields.temp,
+            latency: fields.latency,
+            users: fields.users,
+            ram: fields.ram,
+            warnings: fields.warnings,
+            warningText: fields.warningText,
+            traffic: fields.traffic,
+            ip: fields.ip,
+            connType: fields.connType,
+            resolution: fields.resolution,
+            direct: fields.direct,
+            codec: fields.codec || "",
+            fps: fields.fps || "",
+            bitrate: fields.bitrate || "",
+            toggles: fields.toggles || { speed: "OFF", caffeine: "OFF", theme: "Light", night: "OFF" }
+        };
     },
 
     _parseStatus: function(raw) {
@@ -211,7 +265,7 @@ MyApplet.prototype = {
         if (raw[0] === "{") {
             try {
                 let j = JSON.parse(raw);
-                return {
+                return this._statusObject({
                     label: (j.mode || "Unknown").toString(),
                     temp: (j.temperature || "N/A").toString(),
                     latency: (j.latency || "N/A").toString(),
@@ -224,8 +278,11 @@ MyApplet.prototype = {
                     connType: (j.connection || "N/A").toString(),
                     resolution: (j.resolution || "N/A").toString(),
                     direct: (j.direct_address || "").toString().trim() || null,
-                    codec: (j.codec || "").toString().trim()
-                };
+                    codec: (j.codec || "").toString().trim(),
+                    fps: (j.fps || "").toString().trim(),
+                    bitrate: (j.bitrate || "").toString().trim(),
+                    toggles: j.toggles || null
+                });
             } catch(e) {
                 return null;
             }
@@ -233,7 +290,10 @@ MyApplet.prototype = {
 
         let p = raw.split(" | ");
         if (p.length < 9) return null;
-        return {
+        let codec = ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim();
+        let fps = ((p[13] || "").trim() === "none") ? "" : (p[13] || "").trim();
+        let bitrate = ((p[14] || "").trim() === "none") ? "" : (p[14] || "").trim();
+        return this._statusObject({
             label: (p[0] || "Unknown").trim(),
             temp: (p[1] || "N/A").trim(),
             latency: (p[2] || "N/A").trim(),
@@ -246,8 +306,11 @@ MyApplet.prototype = {
             connType: (p[9] || "N/A").trim(),
             resolution: (p[10] || "N/A").trim(),
             direct: (p[11] || "").trim() || null,
-            codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim()
-        };
+            codec: codec,
+            fps: fps,
+            bitrate: bitrate,
+            toggles: this._parseToggles((p[15] || "").trim())
+        });
     },
 
     _setUnavailable: function(reason) {
@@ -267,8 +330,9 @@ MyApplet.prototype = {
             }
 
             let users = status.users;
+            let notify = this._notifyEnabled !== false;
 
-            if (this._notifyEnabled) {
+            if (notify) {
                 if (users > this.lastUserCount)
                     Util.spawn(["notify-send", "-u", "critical", "Remote Studio",
                         (users - this.lastUserCount) + " user(s) connected"]);
@@ -277,30 +341,41 @@ MyApplet.prototype = {
                         "User disconnected (" + users + " remaining)"]);
             }
             this.lastUserCount = users;
+            this._lastStatus = status;
 
-            this.set_applet_icon_name(this._iconForMode(status.label));
+            let icon = status.users > 0 ? "network-wired-symbolic" : this._iconForMode(status.label);
+            this.set_applet_icon_name(icon);
             this.set_applet_label(this._panelLabel(status));
+
+            let media = "";
+            if (status.codec) media += "\nCodec: " + status.codec;
+            if (status.fps) media += (media ? " @ " : "\nCodec: ") + status.fps + " fps";
+            if (status.bitrate) media += "\nBitrate: " + status.bitrate;
+            let toggles = status.toggles || {};
             this.set_applet_tooltip(
                 "Remote Studio"   +
                 "\nMode: "    + status.label      +
                 "\nRes: "     + status.resolution +
                 "\nPath: "    + status.connType   +
-                (status.codec ? "\nCodec: " + status.codec : "") +
+                media +
                 "\nIP: "      + status.ip         +
                 "\nDirect: "  + (status.direct || "N/A") +
                 "\nTemp: "    + status.temp       +
                 "\nRAM: "     + status.ram        +
                 "\nLatency: " + status.latency    +
                 "\nTraffic: " + status.traffic    +
+                "\nSpeed: "   + (toggles.speed || "OFF") +
+                "  Caffeine: " + (toggles.caffeine || "OFF") +
+                "  Theme: "   + (toggles.theme || "Light") +
+                "  Night: "   + (toggles.night || "OFF") +
                 "\nWarnings: "+ status.warningText
             );
+
+            if (this.menu && this.menu.isOpen) this._buildMenu();
         } catch(e) {
             this._setUnavailable("Status read failed");
         }
     },
-
-
-    // ── Profile loading (deduped, last-wins, insertion order) ─────────────────
 
     _loadProfiles: function() {
         let seen = {}, order = [];
@@ -323,11 +398,28 @@ MyApplet.prototype = {
         return order.map(k => seen[k]);
     },
 
-    // ── Action runner ─────────────────────────────────────────────────────────
+    _loadRecentProfileKeys: function() {
+        let keys = [];
+        try {
+            if (!GLib.file_test(RECENT_PROFILES_FILE, GLib.FileTest.EXISTS)) return keys;
+            let [ok, buf] = GLib.file_get_contents(RECENT_PROFILES_FILE);
+            if (!ok) return keys;
+            buf.toString().split("\n").forEach(line => {
+                line = (line || "").trim();
+                if (line && keys.indexOf(line) === -1) keys.push(line);
+            });
+        } catch(e) {}
+        return keys.slice(0, 5);
+    },
+
+    _tailnetIp: function(status) {
+        if (!status || !status.ip || status.ip === "N/A") return null;
+        let ip = status.ip.split("/")[0].trim();
+        return ip || null;
+    },
 
     _runRes: function(arg) {
         Util.spawn([RES_CMD].concat(arg.split(" ")));
-        // Refresh label and menu after action settles
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
             this._scheduleUpdate();
             this._buildMenu();
@@ -335,9 +427,6 @@ MyApplet.prototype = {
         });
     },
 
-    // ── Submenu helpers ───────────────────────────────────────────────────────
-
-    // Create a collapsible group; persists open/closed state across rebuilds
     _makeGroup: function(title, stateKey) {
         let group = new PopupMenu.PopupSubMenuMenuItem(title);
         if (_groupOpen[stateKey]) group.menu.open(false);
@@ -347,15 +436,28 @@ MyApplet.prototype = {
         return group;
     },
 
-    _subItem: function(group, label, icon, arg) {
+    _subHeader: function(parent, label) {
+        let item = new PopupMenu.PopupMenuItem(label, {
+            reactive: false,
+            style_class: "popup-subtitle-menu-item"
+        });
+        parent.addMenuItem(item);
+        return item;
+    },
+
+    _subItem: function(group, label, icon, arg, tooltip) {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
+        if (tooltip && item.actor && item.actor.set_tooltip_text)
+            item.actor.set_tooltip_text(tooltip);
         item.connect("activate", () => this._runRes(arg));
         group.menu.addMenuItem(item);
         return item;
     },
 
-    _subTerminal: function(group, label, icon, arg) {
+    _subTerminal: function(group, label, icon, arg, tooltip) {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
+        if (tooltip && item.actor && item.actor.set_tooltip_text)
+            item.actor.set_tooltip_text(tooltip);
         item.connect("activate", () => {
             Util.spawn(["x-terminal-emulator", "-e", RES_CMD].concat(arg.split(" ")));
         });
@@ -366,76 +468,217 @@ MyApplet.prototype = {
         group.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     },
 
-    // ── Menu builder ──────────────────────────────────────────────────────────
+    _addTextScalingSlider: function(group) {
+        this._subSep(group);
+        this._subHeader(group.menu, "Text Scaling");
+
+        let slider = new PopupMenu.PopupSliderMenuItem(0);
+        if (slider.actor && slider.actor.set_tooltip_text)
+            slider.actor.set_tooltip_text("Adjust Cinnamon desktop text scaling (0.5\u20132.0)");
+
+        try {
+            let proc = Gio.Subprocess.new(
+                ["gsettings", "get", "org.cinnamon.desktop.interface", "text-scaling-factor"],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            );
+            proc.communicate_utf8_async(null, null, (p, res) => {
+                try {
+                    let [ok, out] = p.communicate_utf8_finish(res);
+                    if (ok && out) {
+                        let currentScale = parseFloat(out.trim());
+                        if (!isNaN(currentScale)) {
+                            let val = (currentScale - 0.5) / 1.5;
+                            slider.setValue(Math.max(0, Math.min(1, val)));
+                        }
+                    }
+                } catch(e) {}
+            });
+        } catch(e) {}
+
+        slider.connect("value-changed", (s, value) => {
+            let scale = 0.5 + (value * 1.5);
+            Util.spawn(["gsettings", "set", "org.cinnamon.desktop.interface",
+                "text-scaling-factor", scale.toFixed(2)]);
+        });
+        group.menu.addMenuItem(slider);
+    },
+
+    _buildStatusHeader: function() {
+        let status = this._lastStatus;
+        if (!status) return;
+
+        let conn = status.users > 0
+            ? (status.connType === "Direct" ? "Direct" : "Relayed") + " \u00d7" + status.users
+            : "No active session";
+        let detail = status.resolution;
+        if (status.codec) detail += " \u00b7 " + status.codec;
+        if (status.fps) detail += " @" + status.fps + "fps";
+        if (status.bitrate) detail += " \u00b7 " + status.bitrate;
+        let summary = conn + "  \u00b7  " + detail;
+
+        this._subHeader(this.menu, "LIVE STATUS");
+        let statusItem = new PopupMenu.PopupMenuItem(summary, { reactive: false });
+        if (statusItem.label) statusItem.label.clutter_text.ellipsize = 3;
+        this.menu.addMenuItem(statusItem);
+
+        if (status.warnings > 0) {
+            let warnItem = new PopupMenu.PopupIconMenuItem(
+                "Warning: " + status.warningText,
+                "dialog-warning-symbolic", St.IconType.SYMBOLIC
+            );
+            warnItem.connect("activate", () => {
+                Util.spawn(["x-terminal-emulator", "-e", RES_CMD, "doctor"]);
+            });
+            this.menu.addMenuItem(warnItem);
+        }
+
+        let toggles = status.toggles || {};
+        let toggleLine = "Speed " + (toggles.speed || "OFF") +
+            "  \u00b7  Caffeine " + (toggles.caffeine || "OFF") +
+            "  \u00b7  " + (toggles.theme || "Light") +
+            "  \u00b7  Night " + (toggles.night || "OFF");
+        this.menu.addMenuItem(new PopupMenu.PopupMenuItem(toggleLine, { reactive: false }));
+
+        if (status.users > 0 && status.ip && status.ip !== "N/A" && status.ip !== "None") {
+            status.ip.split(",").forEach(ip => {
+                ip = ip.trim();
+                if (!ip) return;
+                let peer = new PopupMenu.PopupIconMenuItem(ip, "avatar-default-symbolic", St.IconType.SYMBOLIC);
+                peer.actor.reactive = false;
+                this.menu.addMenuItem(peer);
+            });
+        }
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+    },
 
     _buildMenu: function() {
         this.menu.removeAll();
 
-        let currentMode    = this._getCurrentMode();
-        let profiles       = this._loadProfiles();
-        let defaultProfile = this._getDefaultProfile();
-        let directAddr     = this._getDirectAddress();
+        this._buildStatusHeader();
 
-        // Smart: if the current mode belongs to a profile, ensure presets group
-        // is open so the active checkmark is visible
+        let currentMode     = this._getCurrentMode();
+        let profiles        = this._loadProfiles();
+        let profileByKey    = {};
+        profiles.forEach(p => { profileByKey[p.key] = p; });
+        let sessionProfile  = this._getSessionProfile();
+        let directAddr      = this._lastStatus ? this._lastStatus.direct : null;
+        let tailnetIp       = this._tailnetIp(this._lastStatus);
+        let toggles         = (this._lastStatus && this._lastStatus.toggles) || {};
+
         let activeIsInProfiles = profiles.some(p => p.label === currentMode);
         if (activeIsInProfiles) _groupOpen.presets = true;
 
-        // ── 📺 Device Presets ─────────────────────────────────────────────────
-        let presetsGroup = this._makeGroup("📺  Device Presets", "presets");
+        let recentKeys = this._loadRecentProfileKeys().filter(k => profileByKey[k]);
+        if (recentKeys.length > 0) {
+            this._subHeader(this.menu, "RECENT");
+            recentKeys.forEach(key => {
+                let p = profileByKey[key];
+                let active = (currentMode === p.label);
+                let item = new PopupMenu.PopupIconMenuItem(
+                    (active ? "\u2713 " : "   ") + p.label,
+                    this._iconForMode(p.label), St.IconType.SYMBOLIC
+                );
+                if (active) item.setShowDot(true);
+                item.connect("activate", () => this._runRes(p.key));
+                this.menu.addMenuItem(item);
+            });
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        }
+
+        let presetsGroup = this._makeGroup("Device Presets", "presets");
         profiles.forEach(p => {
             let active = (currentMode === p.label);
-            let mark   = active ? "✓  " : "     ";
+            let mark   = active ? "\u2713 " : "   ";
             let icon   = this._iconForMode(p.label);
             let item   = new PopupMenu.PopupIconMenuItem(
-                mark + p.label + "  " + p.width + "×" + p.height,
+                mark + p.label + "  " + p.width + "\u00d7" + p.height,
                 icon, St.IconType.SYMBOLIC
             );
             if (active) item.setShowDot(true);
+            if (item.actor && item.actor.set_tooltip_text)
+                item.actor.set_tooltip_text("Switch display to " + p.label);
             item.connect("activate", () => this._runRes(p.key));
             presetsGroup.menu.addMenuItem(item);
         });
         this.menu.addMenuItem(presetsGroup);
 
-        // ── ⚡ Performance & Session ──────────────────────────────────────────
-        let perfGroup = this._makeGroup("⚡  Performance & Session", "performance");
-        this._subItem(perfGroup, "▶  Start Session  (" + defaultProfile + ")",
-            "media-playback-start-symbolic", "session start " + defaultProfile);
-        this._subItem(perfGroup, "⏹  Stop Session",
-            "media-playback-stop-symbolic", "session stop");
+        let perfGroup = this._makeGroup("Performance & Session", "performance");
+        this._subItem(perfGroup, "Start Session (" + sessionProfile + ")",
+            "media-playback-start-symbolic", "session start " + sessionProfile,
+            "Apply default profile and start an optimized session");
+        this._subItem(perfGroup, "Stop Session",
+            "media-playback-stop-symbolic", "session stop",
+            "End active session and restore layout");
         this._subSep(perfGroup);
-        this._subItem(perfGroup, "Toggle Speed Mode",  "go-jump-symbolic",              "speed");
-        this._subItem(perfGroup, "Toggle Caffeine",    "battery-symbolic",              "caf");
-        this._subItem(perfGroup, "Toggle Theme",       "weather-clear-night-symbolic",  "theme");
-        this._subItem(perfGroup, "Toggle Night Shift", "night-light-symbolic",          "night");
+        this._subItem(perfGroup, "Toggle Speed Mode" + this._toggleSuffix(toggles.speed, "ON", "OFF"),
+            "go-jump-symbolic", "speed", "Optimize for low-latency remote control");
+        this._subItem(perfGroup, "Toggle Caffeine" + this._toggleSuffix(toggles.caffeine, "ON", "OFF"),
+            "battery-symbolic", "caf", "Keep display awake permanently");
+        this._subItem(perfGroup, "Toggle Theme" + " [" + (toggles.theme || "Light") + "]",
+            "weather-clear-night-symbolic", "theme", "Invert colors for OLED remote clients");
+        this._subItem(perfGroup, "Toggle Night Shift" + this._toggleSuffix(toggles.night, "ON", "OFF"),
+            "night-light-symbolic", "night", "Reduce blue light for evening sessions");
+        this._subSep(perfGroup);
+        this._subItem(perfGroup, "Rotate Left",  "object-rotate-left-symbolic",  "rotate left",
+            "Rotate display counter-clockwise");
+        this._subItem(perfGroup, "Rotate Right", "object-rotate-right-symbolic", "rotate right",
+            "Rotate display clockwise");
+        this._subItem(perfGroup, "Reset Orientation", "object-flip-horizontal-symbolic", "rotate normal",
+            "Restore normal landscape orientation");
+        this._addTextScalingSlider(perfGroup);
         this.menu.addMenuItem(perfGroup);
 
-        // ── 📡 RustDesk ───────────────────────────────────────────────────────
-        let rdGroup = this._makeGroup("📡  RustDesk", "rustdesk");
-        this._subItem(rdGroup, "Quality Preset",  "video-display-symbolic", "rustdesk apply quality");
-        this._subItem(rdGroup, "Balanced Preset", "video-display-symbolic", "rustdesk apply balanced");
-        this._subItem(rdGroup, "Speed Preset",    "video-display-symbolic", "rustdesk apply speed");
+        let rdGroup = this._makeGroup("RustDesk", "rustdesk");
+        this._subItem(rdGroup, "Quality Preset",  "video-display-symbolic", "rustdesk apply quality",
+            "Best image quality, higher bandwidth");
+        this._subItem(rdGroup, "Balanced Preset", "video-display-symbolic", "rustdesk apply balanced",
+            "Balance quality and latency");
+        this._subItem(rdGroup, "Speed Preset",    "video-display-symbolic", "rustdesk apply speed",
+            "Lowest latency, reduced quality");
         this._subSep(rdGroup);
-        this._subItem(rdGroup, "Restart Service", "network-server-symbolic", "service");
+        this._subTerminal(rdGroup, "View Session Status", "view-statistics-symbolic", "rustdesk status",
+            "Show codec, FPS, and bitrate from RustDesk logs");
+        this._subTerminal(rdGroup, "View Service Log", "text-x-generic-symbolic", "rustdesk log 40",
+            "Tail recent RustDesk service log output");
+        this._subSep(rdGroup);
+        this._subItem(rdGroup, "Restart Service", "network-server-symbolic", "service",
+            "Restart the RustDesk background service");
         this.menu.addMenuItem(rdGroup);
 
-        // ── 🛠 System & Security ──────────────────────────────────────────────
-        let sysGroup = this._makeGroup("🛠  System & Security", "system");
-        this._subItem(sysGroup,    "Privacy Shield (Lock)",        "system-lock-screen-symbolic",  "privacy");
-        this._subItem(sysGroup,    "Fix Clipboard / Audio / Keys", "applications-system-symbolic",  "fix");
-        this._subTerminal(sysGroup,"Run Doctor",                   "dialog-information-symbolic",   "doctor");
-        this._subTerminal(sysGroup,"Show Tailnet Address",         "network-vpn-symbolic",          "tailnet");
-        this._subTerminal(sysGroup,"Tailnet Doctor",               "network-wired-symbolic",        "tailnet doctor");
-        this._subItem(sysGroup,    "Emergency Display Reset",      "view-refresh-symbolic",         "reset");
+        let sysGroup = this._makeGroup("System & Security", "system");
+        this._subItem(sysGroup,    "Privacy Shield (Lock)",        "system-lock-screen-symbolic",  "privacy",
+            "Lock screen and hide desktop contents");
+        this._subItem(sysGroup,    "Fix Clipboard / Audio / Keys", "applications-system-symbolic",  "fix",
+            "Repair common remote session issues");
+        this._subTerminal(sysGroup,"Run Doctor",                   "dialog-information-symbolic",   "doctor",
+            "Run full system diagnostics");
+        this._subTerminal(sysGroup,"Show Tailnet Address",         "network-vpn-symbolic",          "tailnet",
+            "Display Tailscale network address");
+        this._subTerminal(sysGroup,"Tailnet Doctor",               "network-wired-symbolic",        "tailnet doctor",
+            "Diagnose Tailscale connectivity");
+        this._subItem(sysGroup,    "Emergency Display Reset",      "view-refresh-symbolic",         "reset",
+            "Reset display to safe 1024\u00d7768 mode");
         this.menu.addMenuItem(sysGroup);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        // ── Footer (always visible) ───────────────────────────────────────────
+        if (tailnetIp) {
+            let copyTailnet = new PopupMenu.PopupIconMenuItem(
+                "Copy Tailnet IP (" + tailnetIp + ")",
+                "edit-copy-symbolic", St.IconType.SYMBOLIC
+            );
+            copyTailnet.connect("activate", () => {
+                Util.spawn(["bash", "-c",
+                    "printf %s \"$1\" | xclip -selection clipboard",
+                    "remote-studio", tailnetIp]);
+            });
+            this.menu.addMenuItem(copyTailnet);
+        }
 
         if (directAddr) {
             let copyItem = new PopupMenu.PopupIconMenuItem(
-                "⎘  Copy Direct Address (" + directAddr + ")",
+                "Copy Direct Address (" + directAddr + ")",
                 "edit-copy-symbolic", St.IconType.SYMBOLIC
             );
             copyItem.connect("activate", () => {
@@ -446,22 +689,29 @@ MyApplet.prototype = {
             this.menu.addMenuItem(copyItem);
         }
 
-        let muteLabel = this._notifyEnabled ? "🔕  Mute Connect/Disconnect Alerts" : "🔔  Unmute Alerts";
-        let muteIcon  = this._notifyEnabled ? "notifications-disabled-symbolic" : "notification-symbolic";
+        let muteLabel = this._notifyEnabled !== false
+            ? "Mute Connect/Disconnect Alerts"
+            : "Unmute Connect/Disconnect Alerts";
+        let muteIcon  = this._notifyEnabled !== false
+            ? "notifications-disabled-symbolic"
+            : "notification-symbolic";
         let muteItem  = new PopupMenu.PopupIconMenuItem(muteLabel, muteIcon, St.IconType.SYMBOLIC);
-        muteItem.connect("activate", () => { this._notifyEnabled = !this._notifyEnabled; this._buildMenu(); });
+        muteItem.connect("activate", () => {
+            this._notifyEnabled = !this._notifyEnabled;
+            this.settings.setValue("notify_enabled", this._notifyEnabled);
+            this._buildMenu();
+        });
         this.menu.addMenuItem(muteItem);
 
         let tuiItem = new PopupMenu.PopupIconMenuItem(
-            "⌨  Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC
+            "Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC
         );
         tuiItem.connect("activate", () => { Util.spawn(["x-terminal-emulator", "-e", RES_CMD]); });
         this.menu.addMenuItem(tuiItem);
     },
 
-    // ── Applet lifecycle ──────────────────────────────────────────────────────
-
     on_applet_clicked: function(event) {
+        this._readStatus();
         this._buildMenu();
         this._scheduleUpdate();
         this.menu.toggle();

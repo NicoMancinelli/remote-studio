@@ -68,8 +68,10 @@ ln -s /usr/share/remote-studio/res.sh "$PKG_DIR/usr/local/bin/res"
 # Cinnamon applet
 copy_file "$ROOT_DIR/applet/applet.js" "$PKG_DIR/usr/share/remote-studio/applet/applet.js" 0644
 copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/remote-studio/applet/metadata.json" 0644
+copy_file "$ROOT_DIR/applet/settings-schema.json" "$PKG_DIR/usr/share/remote-studio/applet/settings-schema.json" 0644
 copy_file "$ROOT_DIR/applet/applet.js" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/applet.js" 0644
 copy_file "$ROOT_DIR/applet/metadata.json" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/metadata.json" 0644
+copy_file "$ROOT_DIR/applet/settings-schema.json" "$PKG_DIR/usr/share/cinnamon/applets/remote-studio@neek/settings-schema.json" 0644
 
 # Shared data — config templates. The config/ copies keep package installs
 # source-layout compatible; the flat copies preserve older fallback paths.

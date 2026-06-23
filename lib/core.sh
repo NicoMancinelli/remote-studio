@@ -147,7 +147,7 @@ get_warning_summary() {
 
     applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
     applet_ok=1
-    for f in applet.js metadata.json; do
+    for f in applet.js metadata.json settings-schema.json; do
         if [ "$(readlink "$applet_dir/$f" 2>/dev/null)" != "$ROOT_DIR/applet/$f" ]; then
             applet_ok=0; break
         fi
