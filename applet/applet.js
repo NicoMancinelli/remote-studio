@@ -22,6 +22,7 @@ const STATUS_DIR  = (RUNTIME_DIR && GLib.file_test(RUNTIME_DIR, GLib.FileTest.IS
     : "/tmp/remote-studio-" + FALLBACK_UID;
 const STATUS_FILE = STATUS_DIR + "/status";
 const STATE_FILE  = GLib.get_home_dir() + "/.res_state";
+const RECENT_PROFILES_FILE = GLib.get_home_dir() + "/.config/remote-studio/recent_profiles";
 
 function _safeReadLink(path) {
     try {
@@ -88,7 +89,9 @@ MyApplet.prototype = {
     },
 
     _onSettingsChanged: function() {
-        Util.spawn([RES_CMD, "config", "set", "DEFAULT_PROFILE", this.defaultProfile || "mac"]);
+        let profile = this.defaultProfile || "mac";
+        Util.spawn([RES_CMD, "config", "set", "DEFAULT_SESSION_PROFILE", profile]);
+        Util.spawn([RES_CMD, "config", "set", "DEFAULT_PROFILE", profile]);
         Util.spawn([RES_CMD, "config", "set", "AUTO_SESSION", this.autoSession ? "true" : "false"]);
         if (this.menu && this.menu.isOpen) this._buildMenu();
     },
@@ -152,16 +155,41 @@ MyApplet.prototype = {
         return "";
     },
 
-    _getDefaultProfile: function() {
+    _getSessionProfile: function() {
         if (this.defaultProfile) return this.defaultProfile;
         try {
             let f = GLib.get_home_dir() + "/.config/remote-studio/remote-studio.conf";
             if (GLib.file_test(f, GLib.FileTest.EXISTS)) {
                 let [ok, buf] = GLib.file_get_contents(f);
-                if (ok) { let m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m); if (m) return m[1].trim(); }
+                if (ok) {
+                    let m = buf.toString().match(/^DEFAULT_SESSION_PROFILE=(.+)$/m);
+                    if (m) return m[1].trim();
+                    m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m);
+                    if (m) return m[1].trim();
+                }
             }
         } catch(e) {}
         return "mac";
+    },
+
+    _parseToggles: function(raw) {
+        let toggles = { speed: "OFF", caffeine: "OFF", theme: "Light", night: "OFF" };
+        if (!raw) return toggles;
+        raw.split(";").forEach(part => {
+            let eq = part.indexOf("=");
+            if (eq === -1) return;
+            let key = part.slice(0, eq).trim();
+            let val = part.slice(eq + 1).trim();
+            if (key === "speed") toggles.speed = val;
+            else if (key === "caffeine") toggles.caffeine = val;
+            else if (key === "theme") toggles.theme = val;
+            else if (key === "night") toggles.night = val;
+        });
+        return toggles;
+    },
+
+    _toggleSuffix: function(state, onLabel, offLabel) {
+        return " [" + (state === "ON" || state === "Dark" ? onLabel : offLabel) + "]";
     },
 
     _iconForMode: function(modeName) {
@@ -198,14 +226,36 @@ MyApplet.prototype = {
         let alert = status.warnings > 0 ? "! " : "";
         let users = status.users > 0 ? " \u00d7" + status.users : "";
         let codec = (status.users > 0 && status.codec) ? " " + this._shortCodec(status.codec) : "";
+        let fps = (status.users > 0 && status.fps) ? "@" + status.fps : "";
         let mode = this._compactModeLabel(status.label);
-        let base = alert + dot + mode + codec + users;
+        let base = alert + dot + mode + codec + fps + users;
 
         if (base.length > MAX_PANEL_LABEL) {
-            let reserved = alert.length + dot.length + users.length + codec.length;
-            base = alert + dot + this._ellipsize(mode, Math.max(4, MAX_PANEL_LABEL - reserved)) + codec + users;
+            let reserved = alert.length + dot.length + users.length + codec.length + fps.length;
+            base = alert + dot + this._ellipsize(mode, Math.max(4, MAX_PANEL_LABEL - reserved)) + codec + fps + users;
         }
         return base;
+    },
+
+    _statusObject: function(fields) {
+        return {
+            label: fields.label,
+            temp: fields.temp,
+            latency: fields.latency,
+            users: fields.users,
+            ram: fields.ram,
+            warnings: fields.warnings,
+            warningText: fields.warningText,
+            traffic: fields.traffic,
+            ip: fields.ip,
+            connType: fields.connType,
+            resolution: fields.resolution,
+            direct: fields.direct,
+            codec: fields.codec || "",
+            fps: fields.fps || "",
+            bitrate: fields.bitrate || "",
+            toggles: fields.toggles || { speed: "OFF", caffeine: "OFF", theme: "Light", night: "OFF" }
+        };
     },
 
     _parseStatus: function(raw) {
@@ -215,7 +265,7 @@ MyApplet.prototype = {
         if (raw[0] === "{") {
             try {
                 let j = JSON.parse(raw);
-                return {
+                return this._statusObject({
                     label: (j.mode || "Unknown").toString(),
                     temp: (j.temperature || "N/A").toString(),
                     latency: (j.latency || "N/A").toString(),
@@ -228,8 +278,11 @@ MyApplet.prototype = {
                     connType: (j.connection || "N/A").toString(),
                     resolution: (j.resolution || "N/A").toString(),
                     direct: (j.direct_address || "").toString().trim() || null,
-                    codec: (j.codec || "").toString().trim()
-                };
+                    codec: (j.codec || "").toString().trim(),
+                    fps: (j.fps || "").toString().trim(),
+                    bitrate: (j.bitrate || "").toString().trim(),
+                    toggles: j.toggles || null
+                });
             } catch(e) {
                 return null;
             }
@@ -237,7 +290,10 @@ MyApplet.prototype = {
 
         let p = raw.split(" | ");
         if (p.length < 9) return null;
-        return {
+        let codec = ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim();
+        let fps = ((p[13] || "").trim() === "none") ? "" : (p[13] || "").trim();
+        let bitrate = ((p[14] || "").trim() === "none") ? "" : (p[14] || "").trim();
+        return this._statusObject({
             label: (p[0] || "Unknown").trim(),
             temp: (p[1] || "N/A").trim(),
             latency: (p[2] || "N/A").trim(),
@@ -250,8 +306,11 @@ MyApplet.prototype = {
             connType: (p[9] || "N/A").trim(),
             resolution: (p[10] || "N/A").trim(),
             direct: (p[11] || "").trim() || null,
-            codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim()
-        };
+            codec: codec,
+            fps: fps,
+            bitrate: bitrate,
+            toggles: this._parseToggles((p[15] || "").trim())
+        });
     },
 
     _setUnavailable: function(reason) {
@@ -284,20 +343,31 @@ MyApplet.prototype = {
             this.lastUserCount = users;
             this._lastStatus = status;
 
-            this.set_applet_icon_name(this._iconForMode(status.label));
+            let icon = status.users > 0 ? "network-wired-symbolic" : this._iconForMode(status.label);
+            this.set_applet_icon_name(icon);
             this.set_applet_label(this._panelLabel(status));
+
+            let media = "";
+            if (status.codec) media += "\nCodec: " + status.codec;
+            if (status.fps) media += (media ? " @ " : "\nCodec: ") + status.fps + " fps";
+            if (status.bitrate) media += "\nBitrate: " + status.bitrate;
+            let toggles = status.toggles || {};
             this.set_applet_tooltip(
                 "Remote Studio"   +
                 "\nMode: "    + status.label      +
                 "\nRes: "     + status.resolution +
                 "\nPath: "    + status.connType   +
-                (status.codec ? "\nCodec: " + status.codec : "") +
+                media +
                 "\nIP: "      + status.ip         +
                 "\nDirect: "  + (status.direct || "N/A") +
                 "\nTemp: "    + status.temp       +
                 "\nRAM: "     + status.ram        +
                 "\nLatency: " + status.latency    +
                 "\nTraffic: " + status.traffic    +
+                "\nSpeed: "   + (toggles.speed || "OFF") +
+                "  Caffeine: " + (toggles.caffeine || "OFF") +
+                "  Theme: "   + (toggles.theme || "Light") +
+                "  Night: "   + (toggles.night || "OFF") +
                 "\nWarnings: "+ status.warningText
             );
 
@@ -326,6 +396,26 @@ MyApplet.prototype = {
             } catch(e) {}
         });
         return order.map(k => seen[k]);
+    },
+
+    _loadRecentProfileKeys: function() {
+        let keys = [];
+        try {
+            if (!GLib.file_test(RECENT_PROFILES_FILE, GLib.FileTest.EXISTS)) return keys;
+            let [ok, buf] = GLib.file_get_contents(RECENT_PROFILES_FILE);
+            if (!ok) return keys;
+            buf.toString().split("\n").forEach(line => {
+                line = (line || "").trim();
+                if (line && keys.indexOf(line) === -1) keys.push(line);
+            });
+        } catch(e) {}
+        return keys.slice(0, 5);
+    },
+
+    _tailnetIp: function(status) {
+        if (!status || !status.ip || status.ip === "N/A") return null;
+        let ip = status.ip.split("/")[0].trim();
+        return ip || null;
     },
 
     _runRes: function(arg) {
@@ -420,13 +510,34 @@ MyApplet.prototype = {
         let conn = status.users > 0
             ? (status.connType === "Direct" ? "Direct" : "Relayed") + " \u00d7" + status.users
             : "No active session";
-        let detail = status.resolution + (status.codec ? " \u00b7 " + status.codec : "");
+        let detail = status.resolution;
+        if (status.codec) detail += " \u00b7 " + status.codec;
+        if (status.fps) detail += " @" + status.fps + "fps";
+        if (status.bitrate) detail += " \u00b7 " + status.bitrate;
         let summary = conn + "  \u00b7  " + detail;
 
         this._subHeader(this.menu, "LIVE STATUS");
         let statusItem = new PopupMenu.PopupMenuItem(summary, { reactive: false });
         if (statusItem.label) statusItem.label.clutter_text.ellipsize = 3;
         this.menu.addMenuItem(statusItem);
+
+        if (status.warnings > 0) {
+            let warnItem = new PopupMenu.PopupIconMenuItem(
+                "Warning: " + status.warningText,
+                "dialog-warning-symbolic", St.IconType.SYMBOLIC
+            );
+            warnItem.connect("activate", () => {
+                Util.spawn(["x-terminal-emulator", "-e", RES_CMD, "doctor"]);
+            });
+            this.menu.addMenuItem(warnItem);
+        }
+
+        let toggles = status.toggles || {};
+        let toggleLine = "Speed " + (toggles.speed || "OFF") +
+            "  \u00b7  Caffeine " + (toggles.caffeine || "OFF") +
+            "  \u00b7  " + (toggles.theme || "Light") +
+            "  \u00b7  Night " + (toggles.night || "OFF");
+        this.menu.addMenuItem(new PopupMenu.PopupMenuItem(toggleLine, { reactive: false }));
 
         if (status.users > 0 && status.ip && status.ip !== "N/A" && status.ip !== "None") {
             status.ip.split(",").forEach(ip => {
@@ -446,13 +557,34 @@ MyApplet.prototype = {
 
         this._buildStatusHeader();
 
-        let currentMode    = this._getCurrentMode();
-        let profiles       = this._loadProfiles();
-        let defaultProfile = this._getDefaultProfile();
-        let directAddr     = this._lastStatus ? this._lastStatus.direct : null;
+        let currentMode     = this._getCurrentMode();
+        let profiles        = this._loadProfiles();
+        let profileByKey    = {};
+        profiles.forEach(p => { profileByKey[p.key] = p; });
+        let sessionProfile  = this._getSessionProfile();
+        let directAddr      = this._lastStatus ? this._lastStatus.direct : null;
+        let tailnetIp       = this._tailnetIp(this._lastStatus);
+        let toggles         = (this._lastStatus && this._lastStatus.toggles) || {};
 
         let activeIsInProfiles = profiles.some(p => p.label === currentMode);
         if (activeIsInProfiles) _groupOpen.presets = true;
+
+        let recentKeys = this._loadRecentProfileKeys().filter(k => profileByKey[k]);
+        if (recentKeys.length > 0) {
+            this._subHeader(this.menu, "RECENT");
+            recentKeys.forEach(key => {
+                let p = profileByKey[key];
+                let active = (currentMode === p.label);
+                let item = new PopupMenu.PopupIconMenuItem(
+                    (active ? "\u2713 " : "   ") + p.label,
+                    this._iconForMode(p.label), St.IconType.SYMBOLIC
+                );
+                if (active) item.setShowDot(true);
+                item.connect("activate", () => this._runRes(p.key));
+                this.menu.addMenuItem(item);
+            });
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        }
 
         let presetsGroup = this._makeGroup("Device Presets", "presets");
         profiles.forEach(p => {
@@ -472,21 +604,28 @@ MyApplet.prototype = {
         this.menu.addMenuItem(presetsGroup);
 
         let perfGroup = this._makeGroup("Performance & Session", "performance");
-        this._subItem(perfGroup, "Start Session (" + defaultProfile + ")",
-            "media-playback-start-symbolic", "session start " + defaultProfile,
+        this._subItem(perfGroup, "Start Session (" + sessionProfile + ")",
+            "media-playback-start-symbolic", "session start " + sessionProfile,
             "Apply default profile and start an optimized session");
         this._subItem(perfGroup, "Stop Session",
             "media-playback-stop-symbolic", "session stop",
             "End active session and restore layout");
         this._subSep(perfGroup);
-        this._subItem(perfGroup, "Toggle Speed Mode",  "go-jump-symbolic", "speed",
-            "Optimize for low-latency remote control");
-        this._subItem(perfGroup, "Toggle Caffeine",    "battery-symbolic", "caf",
-            "Keep display awake permanently");
-        this._subItem(perfGroup, "Toggle Theme",       "weather-clear-night-symbolic", "theme",
-            "Invert colors for OLED remote clients");
-        this._subItem(perfGroup, "Toggle Night Shift", "night-light-symbolic", "night",
-            "Reduce blue light for evening sessions");
+        this._subItem(perfGroup, "Toggle Speed Mode" + this._toggleSuffix(toggles.speed, "ON", "OFF"),
+            "go-jump-symbolic", "speed", "Optimize for low-latency remote control");
+        this._subItem(perfGroup, "Toggle Caffeine" + this._toggleSuffix(toggles.caffeine, "ON", "OFF"),
+            "battery-symbolic", "caf", "Keep display awake permanently");
+        this._subItem(perfGroup, "Toggle Theme" + " [" + (toggles.theme || "Light") + "]",
+            "weather-clear-night-symbolic", "theme", "Invert colors for OLED remote clients");
+        this._subItem(perfGroup, "Toggle Night Shift" + this._toggleSuffix(toggles.night, "ON", "OFF"),
+            "night-light-symbolic", "night", "Reduce blue light for evening sessions");
+        this._subSep(perfGroup);
+        this._subItem(perfGroup, "Rotate Left",  "object-rotate-left-symbolic",  "rotate left",
+            "Rotate display counter-clockwise");
+        this._subItem(perfGroup, "Rotate Right", "object-rotate-right-symbolic", "rotate right",
+            "Rotate display clockwise");
+        this._subItem(perfGroup, "Reset Orientation", "object-flip-horizontal-symbolic", "rotate normal",
+            "Restore normal landscape orientation");
         this._addTextScalingSlider(perfGroup);
         this.menu.addMenuItem(perfGroup);
 
@@ -497,6 +636,11 @@ MyApplet.prototype = {
             "Balance quality and latency");
         this._subItem(rdGroup, "Speed Preset",    "video-display-symbolic", "rustdesk apply speed",
             "Lowest latency, reduced quality");
+        this._subSep(rdGroup);
+        this._subTerminal(rdGroup, "View Session Status", "view-statistics-symbolic", "rustdesk status",
+            "Show codec, FPS, and bitrate from RustDesk logs");
+        this._subTerminal(rdGroup, "View Service Log", "text-x-generic-symbolic", "rustdesk log 40",
+            "Tail recent RustDesk service log output");
         this._subSep(rdGroup);
         this._subItem(rdGroup, "Restart Service", "network-server-symbolic", "service",
             "Restart the RustDesk background service");
@@ -518,6 +662,19 @@ MyApplet.prototype = {
         this.menu.addMenuItem(sysGroup);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+
+        if (tailnetIp) {
+            let copyTailnet = new PopupMenu.PopupIconMenuItem(
+                "Copy Tailnet IP (" + tailnetIp + ")",
+                "edit-copy-symbolic", St.IconType.SYMBOLIC
+            );
+            copyTailnet.connect("activate", () => {
+                Util.spawn(["bash", "-c",
+                    "printf %s \"$1\" | xclip -selection clipboard",
+                    "remote-studio", tailnetIp]);
+            });
+            this.menu.addMenuItem(copyTailnet);
+        }
 
         if (directAddr) {
             let copyItem = new PopupMenu.PopupIconMenuItem(

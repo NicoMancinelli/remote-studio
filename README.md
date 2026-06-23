@@ -205,7 +205,9 @@ Remote Studio intentionally has two status outputs:
 | Applet status file | Cinnamon applet | Pipe-delimited single line | `$XDG_RUNTIME_DIR/remote-studio/status`, or `/tmp/remote-studio-$UID/status` when `XDG_RUNTIME_DIR` is unavailable |
 | Automation status | Tests, scripts, CI | JSON object | `res status --json` |
 
-`res status` writes the applet file and prints the same pipe-delimited line. The applet file uses `none` for the codec field when no codec is known so the field count stays stable after trimming. `res status --json` also refreshes that file, then prints JSON with these stable top-level fields: `mode`, `temperature`, `latency`, `users`, `ram`, `warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`, `codec`, and `status_file`.
+`res status` writes the applet file and prints the same pipe-delimited line. The applet file uses `none` for the codec field when no codec is known so the field count stays stable after trimming. `res status --json` also refreshes that file, then prints JSON with these stable top-level fields: `mode`, `temperature`, `latency`, `users`, `ram`, `warnings`, `network`, `ip`, `connection`, `resolution`, `direct_address`, `codec`, `fps`, `bitrate`, `toggles`, and `status_file`.
+
+The pipe-delimited applet file appends optional trailing fields after `codec`: `fps`, `bitrate`, and a compact `toggles` string (`speed=ON;caffeine=OFF;theme=Light;night=OFF`). Older applet builds ignore unknown trailing fields.
 
 The applet should continue to read the file contract. New scripts should use JSON and, when debugging stale applet state, inspect the `status_file` value reported by `res status --json`.
 

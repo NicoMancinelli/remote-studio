@@ -38,7 +38,8 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 - 🟡 Surface session media details in status surfaces.
   - ✅ `res status` / `res status --json`: include last observed codec when a session is active.
   - ✅ Cinnamon applet: shows codec in the panel label and tooltip when available.
-  - 🔴 FPS and bitrate are still limited to `res rustdesk status`.
+  - ✅ `res status` / `res status --json`: include FPS, bitrate, and toggle states.
+  - 🔴 FPS and bitrate are still limited to `res rustdesk status` terminal view for full log context.
 
 ---
 

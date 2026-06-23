@@ -235,7 +235,7 @@ setup() {
     run bash "$SCRIPT" status --json
     [ "$status" -eq 0 ]
 
-    python3 -c 'import json,sys; data=json.load(sys.stdin); assert "mode" in data; assert "warnings" in data' <<< "$output"
+    python3 -c 'import json,sys; data=json.load(sys.stdin); assert "mode" in data; assert "warnings" in data; assert "toggles" in data' <<< "$output"
     [ -f "$XDG_RUNTIME_DIR/remote-studio/status" ]
     grep -q " | " "$XDG_RUNTIME_DIR/remote-studio/status"
 }
