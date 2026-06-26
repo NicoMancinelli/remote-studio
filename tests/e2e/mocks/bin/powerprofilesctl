@@ -1,0 +1,19 @@
+#!/bin/bash
+MOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+MOCK_FILE="${MOCK_DIR}/powerprofile.mock"
+touch "$MOCK_FILE"
+
+if [ "$1" = "set" ]; then
+  echo "$2" > "$MOCK_FILE"
+  exit 0
+elif [ "$1" = "get" ] || [ -z "$1" ]; then
+  VAL=$(cat "$MOCK_FILE" 2>/dev/null)
+  if [ -z "$VAL" ]; then
+    echo "balanced"
+  else
+    echo "$VAL"
+  fi
+  exit 0
+else
+  exit 0
+fi

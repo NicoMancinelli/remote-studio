@@ -1,0 +1,8 @@
+#!/bin/bash
+WIDTH="${1:-2560}"
+HEIGHT="${2:-1664}"
+REFRESH="${3:-60}"
+
+# Outputs CVT modeline format matching what grep / cut expects in the daemon/lib scripts
+echo "# ${WIDTH}x${HEIGHT} 59.95 Hz (CVT)"
+echo "Modeline \"${WIDTH}x${HEIGHT}_60.00\"  348.50  ${WIDTH} $((WIDTH + 192)) $((WIDTH + 472)) $((WIDTH + 944))  ${HEIGHT} $((HEIGHT + 3)) $((HEIGHT + 13)) $((HEIGHT + 60)) -hsync +vsync"

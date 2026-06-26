@@ -1,9 +1,14 @@
 const Applet    = imports.ui.applet;
 const PopupMenu = imports.ui.popupMenu;
+const Settings  = imports.ui.settings;
 const Util      = imports.misc.util;
 const GLib      = imports.gi.GLib;
 const Gio       = imports.gi.Gio;
 const St        = imports.gi.St;
+
+const DBusProxy = Gio.DBusProxy.makeProxyWrapper(
+    '<node><interface name="org.remote_studio.Daemon"><property name="Status" type="s" access="read"/><method name="Refresh"/><signal name="StatusChanged"><arg name="status" type="s"/></signal></interface></node>'
+);
 
 const RES_CMD     = "/usr/local/bin/res";
 const RUNTIME_DIR = GLib.getenv("XDG_RUNTIME_DIR") || GLib.get_user_runtime_dir();
@@ -37,6 +42,13 @@ const PROFILES_FILE = (_repoProfs && GLib.file_test(_repoProfs, GLib.FileTest.EX
     ? _repoProfs
     : "/usr/share/remote-studio/profiles.conf";
 const USER_PROFILES_FILE = GLib.get_home_dir() + "/.config/remote-studio/profiles.conf";
+const FAVORITES_FILE     = GLib.get_home_dir() + "/.config/remote-studio/favorites.json";
+const SESSION_START_FILE = STATUS_DIR + "/.session_start";
+
+const TERMINAL_CANDIDATES = [
+    'x-terminal-emulator', 'gnome-terminal', 'xfce4-terminal',
+    'lxterminal', 'sakura', 'terminator', 'xterm'
+];
 
 const MODE_ICONS = {
     "MacBook Air 13":  "computer-symbolic",
@@ -49,10 +61,7 @@ const MODE_ICONS = {
 };
 
 const MAX_PANEL_LABEL = 28;
-
-// Per-session open/closed state for each submenu group.
-// "presets" starts open — most common action is one click away.
-const _groupOpen = { presets: true, performance: false, rustdesk: false, system: false };
+const CONFIRM_TIMEOUT_MS = 3000;
 
 // ── Applet ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +79,38 @@ MyApplet.prototype = {
         this.set_applet_tooltip("Remote Studio Dashboard");
         this.set_applet_label("Res");
 
+        // ── Cinnamon Settings (properly wired) ─────────────────────────────
+        this.settings = new Settings.Binding(metadata.uuid, instance_id);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "default_profile", "defaultProfile", () => {
+                this._buildMenu();
+            });
+        this.settings.bindProperty(Settings.BindingDirection.BIDIRECTIONAL,
+            "notify_enabled", "_notifyEnabled", (val) => {
+                this._notifyEnabled = val;
+            });
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "auto_session", "autoSession", null);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "label_color_enabled", "_labelColorEnabled", (val) => {
+                // Re-apply color with new setting
+                this._scheduleUpdate();
+            });
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "uptime_display", "_uptimeDisplay", () => {
+                this._scheduleUpdate();
+            });
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "show_latency_bars", "_showLatencyBars", null);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "middle_click_action", "_middleClickAction", null);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "dbus_reconnect", "_dbusReconnect", null);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "confirm_destructive", "_confirmDestructive", null);
+        this.settings.bindProperty(Settings.BindingDirection.IN,
+            "auto_session_profile", "_autoSessionProfile", null);
+
         this.menuManager    = new PopupMenu.PopupMenuManager(this);
         this.menu           = new Applet.AppletPopupMenu(this, orientation);
         this.menuManager.addMenu(this.menu);
@@ -77,65 +118,299 @@ MyApplet.prototype = {
         this.lastUserCount  = 0;
         this._timeout       = null;
         this._fileMonitor   = null;
-        this._notifyEnabled = true;
+        this._profilesMonitors = [];
+        this._notifyEnabled = true;  // will be overwritten by settings bind
         this._refreshInFlight = false;
+        this._clickGuard    = false;
+        this._lastClick     = 0;
+        this._terminal      = null;
+        this._profileCache  = null;
+        this._profileCacheTime = 0;
+        this._sessionStart  = null;
+        this._activeIPs     = [];
+        this._confirmItems  = {};  // { itemKey: { timeoutId, callback } }
+        this._dbusWatchId   = undefined;
+        this._dbusRetryTimeout = null;
+        this._statusFileMonitor = null;
+
+        // Remember last used profile for "last" option
+        this._lastUsedProfile = null;
+
+        // Instance-level group collapse state (avoid sharing across instances)
+        this._groupOpen = { presets: true, performance: false, rustdesk: false, system: false };
+
+        // Load favorites
+        this._loadFavorites();
+        // Load session start time
+        this._loadSessionStart();
 
         this._scheduleUpdate();
-        this._setupFileWatch();
+        this._setupDBus();
         this._buildMenu();
+
+        // Apply initial label color
+        this._applyLabelColor("#aaaaaa");
+    },
+
+    // ── Settings helpers ───────────────────────────────────────────────────
+
+    _getDefaultProfile: function() {
+        let profile = this.defaultProfile || "";
+        // Handle "last" option — use last used profile
+        if (profile === "last") {
+            let lastUsed = this._getLastUsedProfile();
+            if (lastUsed) return lastUsed;
+            return "mac"; // fallback
+        }
+        if (profile) return profile;
+        try {
+            let f = GLib.get_home_dir() + "/.config/remote-studio/remote-studio.conf";
+            if (GLib.file_test(f, GLib.FileTest.EXISTS)) {
+                let [ok, buf] = GLib.file_get_contents(f);
+                if (ok) { let m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m); if (m) return m[1].trim(); }
+            }
+        } catch(e) {}
+        return "mac";
+    },
+
+    // ── Favorites management ─────────────────────────────────────────────
+
+    _loadFavorites: function() {
+        this._favorites = [];
+        try {
+            if (GLib.file_test(FAVORITES_FILE, GLib.FileTest.EXISTS)) {
+                let [ok, buf] = GLib.file_get_contents(FAVORITES_FILE);
+                if (ok) {
+                    this._favorites = JSON.parse(buf.toString());
+                    if (!Array.isArray(this._favorites)) this._favorites = [];
+                }
+            }
+        } catch(e) {
+            this._favorites = [];
+        }
+    },
+
+    _saveFavorites: function() {
+        try {
+            let dir = GLib.get_home_dir() + "/.config/remote-studio";
+            GLib.mkdir_with_parents(dir, 0o755);
+            GLib.file_set_contents(FAVORITES_FILE, JSON.stringify(this._favorites, null, 2));
+        } catch(e) {
+            global.logError("Remote Studio: Failed to save favorites: " + e);
+        }
+    },
+
+    _toggleFavorite: function(profileKey) {
+        let idx = this._favorites.indexOf(profileKey);
+        if (idx >= 0) {
+            this._favorites.splice(idx, 1);
+        } else {
+            this._favorites.push(profileKey);
+        }
+        this._saveFavorites();
+        this._buildMenu();
+    },
+
+    // ── Session uptime tracking ──────────────────────────────────────────
+
+    _loadSessionStart: function() {
+        try {
+            if (GLib.file_test(SESSION_START_FILE, GLib.FileTest.EXISTS)) {
+                let [ok, buf] = GLib.file_get_contents(SESSION_START_FILE);
+                if (ok) {
+                    this._sessionStart = parseInt(buf.toString().trim(), 10);
+                    if (!this._sessionStart || isNaN(this._sessionStart))
+                        this._sessionStart = null;
+                }
+            }
+        } catch(e) {
+            this._sessionStart = null;
+        }
+    },
+
+    _trackSessionStart: function() {
+        this._sessionStart = Date.now();
+        try {
+            GLib.mkdir_with_parents(STATUS_DIR, 0o755);
+            GLib.file_set_contents(SESSION_START_FILE, String(this._sessionStart));
+        } catch(e) {}
+    },
+
+    _clearSessionUptime: function() {
+        this._sessionStart = null;
+        try {
+            if (GLib.file_test(SESSION_START_FILE, GLib.FileTest.EXISTS))
+                GLib.file_delete(SESSION_START_FILE);
+        } catch(e) {}
+    },
+
+    _getSessionUptime: function() {
+        if (this._sessionStart) {
+            return Math.floor((Date.now() - this._sessionStart) / 1000);
+        }
+        return 0;
+    },
+
+    _formatUptime: function(seconds) {
+        if (seconds <= 0) return "";
+        let h = Math.floor(seconds / 3600);
+        let m = Math.floor((seconds % 3600) / 60);
+        let s = seconds % 60;
+        if (h > 0) return h + "h " + m + "m";
+        if (m > 0) return m + "m " + s + "s";
+        return s + "s";
+    },
+
+    // ── Terminal detection ───────────────────────────────────────────────
+
+    _findTerminal: function() {
+        if (this._terminal) return this._terminal;
+        for (let i = 0; i < TERMINAL_CANDIDATES.length; i++) {
+            let found = GLib.find_program_in_path(TERMINAL_CANDIDATES[i]);
+            if (found) {
+                this._terminal = TERMINAL_CANDIDATES[i];
+                return this._terminal;
+            }
+        }
+        this._terminal = "xterm"; // ultimate fallback
+        return this._terminal;
+    },
+
+    // ── Status file monitor (instant UI updates when daemon writes status) ───
+
+    _setupStatusFileMonitor: function() {
+        try {
+            if (this._statusFileMonitor) return;
+            let gfile = Gio.File.new_for_path(STATUS_FILE);
+            let dir = Gio.File.new_for_path(STATUS_DIR);
+            try {
+                let monitor = dir.monitor(Gio.FileMonitorFlags.WATCH_MOVES, null);
+                if (monitor) {
+                    monitor.connect("changed", (mon, file, otherFile, eventType) => {
+                        if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                            eventType === Gio.FileMonitorEvent.CHANGED ||
+                            eventType === Gio.FileMonitorEvent.CREATED) {
+                            this._readStatus();
+                            this._scheduleUpdate();
+                        }
+                    });
+                    this._statusFileMonitor = monitor;
+                    global.log("Remote Studio: Status file monitor active");
+                }
+            } catch(e) {
+                // Fall back to monitoring just the file
+                let monitor = gfile.monitor(Gio.FileMonitorFlags.NONE, null);
+                if (monitor) {
+                    monitor.connect("changed", (mon, file, otherFile, eventType) => {
+                        if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                            eventType === Gio.FileMonitorEvent.CHANGED) {
+                            this._readStatus();
+                            this._scheduleUpdate();
+                        }
+                    });
+                    this._statusFileMonitor = monitor;
+                    global.log("Remote Studio: Status file monitor active (file-level)");
+                }
+            }
+        } catch(e) {
+            global.logError("Remote Studio: Failed to set up status file monitor: " + e);
+        }
     },
 
     // ── Status refresh ────────────────────────────────────────────────────────
 
     _scheduleUpdate: function() {
-        if (this._timeout) GLib.source_remove(this._timeout);
-
-        if (!this._refreshInFlight) {
-            this._refreshInFlight = true;
+        if (this._timeout) { GLib.source_remove(this._timeout); this._timeout = null; }
+        if (this._dbusProxy) {
             try {
-                let [ok, pid] = GLib.spawn_async(null,
-                    ["/bin/bash", "-c",
-                     "mkdir -p " + GLib.shell_quote(STATUS_DIR) +
-                     " && " + GLib.shell_quote(RES_CMD) +
-                     " status > " + GLib.shell_quote(STATUS_FILE)],
-                    null,
-                    GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
-                    null, null);
-                if (ok) {
-                    GLib.child_watch_add(GLib.PRIORITY_DEFAULT, pid, () => {
-                        this._refreshInFlight = false;
-                        GLib.spawn_close_pid(pid);
-                    });
-                } else {
-                    this._refreshInFlight = false;
-                }
-            } catch(e) {
-                this._refreshInFlight = false;
-                this._setUnavailable("Status refresh failed");
+                this._dbusProxy.RefreshRemote();
+            } catch (e) {
+                global.logError("Remote Studio: DBus RefreshRemote failed: " + e);
             }
         }
 
-        this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 10, () => {
-            this._timeout = null;
+        this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
             this._scheduleUpdate();
-            return GLib.SOURCE_REMOVE;
+            return GLib.SOURCE_CONTINUE;
         });
+
+        // Ensure status file monitor is active
+        this._setupStatusFileMonitor();
+    },
+    _setupDBus: function() {
+        try {
+            // Watch for name owner changes for auto-reconnection
+            if (this._dbusWatchId === undefined) {
+                this._dbusWatchId = Gio.DBus.session.watch_name(
+                    'org.remote_studio.Daemon',
+                    Gio.BusNameWatcherFlags.NONE,
+                    (connection, name, nameOwner) => {
+                        if (nameOwner) {
+                            global.log("Remote Studio: DBus daemon appeared (" + nameOwner + ")");
+                            // Daemon appeared (or re-appeared) — set up proxy
+                            this._connectDBusProxy();
+                        } else {
+                            global.log("Remote Studio: DBus daemon vanished, will retry");
+                            this._dbusProxy = null;
+                            if (this._dbusReconnect !== false) {
+                                // Schedule a reconnection attempt in 3 seconds
+                                if (this._dbusRetryTimeout) {
+                                    GLib.source_remove(this._dbusRetryTimeout);
+                                }
+                                this._dbusRetryTimeout = GLib.timeout_add(
+                                    GLib.PRIORITY_DEFAULT, 3000, () => {
+                                        this._dbusRetryTimeout = null;
+                                        global.log("Remote Studio: Retrying DBus connection...");
+                                        this._setupDBus();
+                                        return GLib.SOURCE_REMOVE;
+                                    }
+                                );
+                            }
+                        }
+                    }
+                );
+            }
+
+            if (!this._dbusProxy) {
+                this._connectDBusProxy();
+            }
+        } catch (e) {
+            global.logError("Remote Studio: DBus setup failed: " + e);
+        }
     },
 
-    _setupFileWatch: function() {
+    _connectDBusProxy: function() {
         try {
-            let sf  = Gio.File.new_for_path(STATUS_FILE);
-            let sd  = Gio.File.new_for_path(STATUS_DIR);
-            if (!sd.query_exists(null)) sd.make_directory_with_parents(null);
-            if (!sf.query_exists(null))
-                sf.replace_contents("", null, false, Gio.FileCreateFlags.NONE, null);
-            this._fileMonitor = sf.monitor_file(Gio.FileMonitorFlags.NONE, null);
-            this._fileMonitor.connect("changed", (monitor, file, other, ev) => {
-                if (ev === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
-                    ev === Gio.FileMonitorEvent.MODIFIED)
-                    this._readStatus();
+            if (this._dbusProxySignalId && this._dbusProxy) {
+                try {
+                    this._dbusProxy.disconnectSignal(this._dbusProxySignalId);
+                } catch(e) {}
+                this._dbusProxySignalId = null;
+            }
+
+            this._dbusProxy = new DBusProxy(
+                Gio.DBus.session,
+                'org.remote_studio.Daemon',
+                '/org/remote_studio/Daemon',
+                (proxy, error) => {
+                    if (error) {
+                        global.logError("Failed to connect to Daemon DBus: " + error.message);
+                    } else {
+                        try {
+                            this._readStatusFromDBus(proxy.Status);
+                        } catch(e) {}
+                    }
+                }
+            );
+
+            this._dbusProxySignalId = this._dbusProxy.connectSignal('StatusChanged', (proxy, senderName, [statusString]) => {
+                this._readStatusFromDBus(statusString);
             });
-        } catch(e) { /* polling fallback via _scheduleUpdate */ }
+
+            global.log("Remote Studio: DBus proxy connected successfully");
+        } catch (e) {
+            global.logError("Remote Studio: DBus proxy connect failed: " + e);
+        }
     },
 
     // ── State readers ─────────────────────────────────────────────────────────
@@ -144,6 +419,18 @@ MyApplet.prototype = {
         try {
             let [ok, buf] = GLib.file_get_contents(STATE_FILE);
             if (ok) { let m = buf.toString().trim().match(/'([^']+)'/); return m ? m[1] : ""; }
+        } catch(e) {}
+        return "";
+    },
+
+    _getCurrentResolution: function() {
+        try {
+            let [ok, buf] = GLib.file_get_contents(STATE_FILE);
+            if (ok) {
+                let fields = buf.toString().trim().split(/\s+/);
+                if (fields.length >= 2 && fields[0].match(/^\d+$/) && fields[1].match(/^\d+$/))
+                    return fields[0] + "×" + fields[1];
+            }
         } catch(e) {}
         return "";
     },
@@ -159,16 +446,15 @@ MyApplet.prototype = {
         return null;
     },
 
-    // Read DEFAULT_PROFILE from the user config file (falls back to "mac")
-    _getDefaultProfile: function() {
+    _getActiveIPs: function() {
         try {
-            let f = GLib.get_home_dir() + "/.config/remote-studio/remote-studio.conf";
-            if (GLib.file_test(f, GLib.FileTest.EXISTS)) {
-                let [ok, buf] = GLib.file_get_contents(f);
-                if (ok) { let m = buf.toString().match(/^DEFAULT_PROFILE=(.+)$/m); if (m) return m[1].trim(); }
+            let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
+            if (ok) {
+                let status = this._parseStatus(buf.toString());
+                return status ? (status.active_ips || []) : [];
             }
         } catch(e) {}
-        return "mac";
+        return [];
     },
 
     // ── Panel label / icon ────────────────────────────────────────────────────
@@ -177,6 +463,28 @@ MyApplet.prototype = {
         for (let k in MODE_ICONS) { if (modeName.indexOf(k) !== -1) return MODE_ICONS[k]; }
         if (modeName && modeName.indexOf("Custom") === 0) return "preferences-desktop-display-symbolic";
         return "video-display-symbolic";
+    },
+
+    _applyLabelColor: function(color) {
+        try {
+            this.actor.style = 'color: ' + color + ';';
+        } catch(e) {}
+    },
+
+    _panelColorForStatus: function(status) {
+        if (!status) return "#ff6600";          // orange — unknown / error
+        if (status.warnings > 0) return "#ffaa00";   // yellow — warnings present
+        if (status.users > 0) {
+            return status.connType === "Direct"
+                ? "#00cc66"  // green — direct connection
+                : "#66bbff"; // blue — relayed connection
+        }
+        // Session active but no users
+        if (status.label && status.label !== "Unknown" && status.label !== "None"
+            && status.label.indexOf("Reset") === -1) {
+            return "#aaaaaa"; // gray — active but idle
+        }
+        return "#888888"; // dim — no session
     },
 
     _ellipsize: function(text, maxLength) {
@@ -195,11 +503,14 @@ MyApplet.prototype = {
         let dot = status.users > 0 ? (status.connType === "Direct" ? "● " : "◐ ") : "";
         let alert = status.warnings > 0 ? "⚠ " : "";
         let uc = status.users > 0 ? " 👥" + status.users : "";
-        let base = alert + dot + this._compactModeLabel(status.label) + uc;
+        let uptime = this._getSessionUptime();
+        let uptimeStr = (uptime > 60 && this._uptimeDisplay !== false) ? " ⏱" + this._formatUptime(uptime) : "";
+        let base = alert + dot + this._compactModeLabel(status.label) + uc + uptimeStr;
 
         if (base.length > MAX_PANEL_LABEL) {
-            let reserved = alert.length + dot.length + uc.length;
-            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), MAX_PANEL_LABEL - reserved) + uc;
+            let reserved = alert.length + dot.length + uc.length + uptimeStr.length;
+            let maxLabel = Math.max(0, MAX_PANEL_LABEL - reserved);
+            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), maxLabel) + uc + uptimeStr;
         }
         return base;
     },
@@ -224,7 +535,8 @@ MyApplet.prototype = {
                     connType: (j.connection || "N/A").toString(),
                     resolution: (j.resolution || "N/A").toString(),
                     direct: (j.direct_address || "").toString().trim() || null,
-                    codec: (j.codec || "").toString().trim()
+                    codec: (j.codec || "").toString().trim(),
+                    active_ips: j.active_ips || []
                 };
             } catch(e) {
                 return null;
@@ -246,7 +558,8 @@ MyApplet.prototype = {
             connType: (p[9] || "N/A").trim(),
             resolution: (p[10] || "N/A").trim(),
             direct: (p[11] || "").trim() || null,
-            codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim()
+            codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim(),
+            active_ips: []
         };
     },
 
@@ -254,6 +567,7 @@ MyApplet.prototype = {
         this.set_applet_icon_name("dialog-warning-symbolic");
         this.set_applet_label("Res ?");
         this.set_applet_tooltip("Remote Studio\n" + reason + "\nStatus: " + STATUS_FILE);
+        this._applyLabelColor("#ff4444");
     },
 
     _readStatus: function() {
@@ -266,13 +580,30 @@ MyApplet.prototype = {
                 return;
             }
 
+            // FIX #1: Store active IPs on the instance (was missing!)
+            this._activeIPs = status.active_ips || [];
+
             let users = status.users;
+            let prevUsers = this.lastUserCount;
+
+            // ── Auto-session: start session when connection detected ──────
+            if (this.autoSession && users > 0 && prevUsers === 0) {
+                let profile = this._autoSessionProfile || "last";
+                if (profile === "last" && this._lastUsedProfile) {
+                    profile = this._lastUsedProfile;
+                } else if (profile === "last") {
+                    profile = this._getDefaultProfile();
+                }
+                global.log("Remote Studio: Auto-starting session with '" + profile + "' due to connection");
+                this._runRes("session start " + profile);
+                // Track session start for uptime (runRes also does this but double-tracking is safe)
+            }
 
             if (this._notifyEnabled) {
-                if (users > this.lastUserCount)
+                if (users > prevUsers)
                     Util.spawn(["notify-send", "-u", "critical", "Remote Studio",
-                        (users - this.lastUserCount) + " user(s) connected"]);
-                else if (users < this.lastUserCount && this.lastUserCount > 0)
+                        (users - prevUsers) + " user(s) connected"]);
+                else if (users < prevUsers && prevUsers > 0)
                     Util.spawn(["notify-send", "-u", "normal", "Remote Studio",
                         "User disconnected (" + users + " remaining)"]);
             }
@@ -280,6 +611,19 @@ MyApplet.prototype = {
 
             this.set_applet_icon_name(this._iconForMode(status.label));
             this.set_applet_label(this._panelLabel(status));
+
+            // ── Latency quality indicator ─────────────────────────────────
+            let latencyBars = "";
+            if (this._showLatencyBars !== false && status.latency && status.latency !== "N/A" && status.latency !== "-") {
+                let latVal = parseInt(status.latency, 10);
+                if (!isNaN(latVal) && latVal > 0) {
+                    if (latVal <= 30)          { latencyBars = " ▂▄▆█"; }  // excellent
+                    else if (latVal <= 60)     { latencyBars = " ▂▄▆◌"; }  // good
+                    else if (latVal <= 100)    { latencyBars = " ▂▄◌◌"; }  // fair
+                    else                        { latencyBars = " ▂◌◌◌"; }  // poor
+                }
+            }
+
             this.set_applet_tooltip(
                 "Remote Studio"   +
                 "\nMode: "    + status.label      +
@@ -291,18 +635,45 @@ MyApplet.prototype = {
                 "\nTemp: "    + status.temp       +
                 "\nRAM: "     + status.ram        +
                 "\nLatency: " + status.latency    +
+                latencyBars +
                 "\nTraffic: " + status.traffic    +
-                "\nWarnings: "+ status.warningText
+                "\nWarnings: "+ status.warningText +
+                (this.lastUserCount > 0 ? "\nActive: " + this._activeIPs.join(", ") : "")
             );
+
+            // Color-coded label (respects settings toggle)
+            if (this._labelColorEnabled !== false) {
+                this._applyLabelColor(this._panelColorForStatus(status));
+            } else {
+                this._applyLabelColor("");
+            }
         } catch(e) {
             this._setUnavailable("Status read failed");
         }
     },
 
+    // FIX #2: DBus status handler — delegated to _readStatus
+    _readStatusFromDBus: function(statusString) {
+        try {
+            if (!statusString) return;
+            // Write the DBus status to the status file so _readStatus can parse it
+            GLib.mkdir_with_parents(STATUS_DIR, 0o755);
+            GLib.file_set_contents(STATUS_FILE, statusString);
+            this._readStatus();
+        } catch(e) {
+            global.logError("Remote Studio: _readStatusFromDBus failed: " + e);
+        }
+    },
 
-    // ── Profile loading (deduped, last-wins, insertion order) ─────────────────
+    // ── Profile loading (deduped, last-wins, insertion order, with caching) ──
 
-    _loadProfiles: function() {
+    _loadProfiles: function(force) {
+        // Cache for 5 seconds unless forced
+        if (this._profileCache && !force &&
+            (Date.now() - this._profileCacheTime) < 5000) {
+            return this._profileCache;
+        }
+
         let seen = {}, order = [];
         [PROFILES_FILE, USER_PROFILES_FILE].forEach(file => {
             try {
@@ -320,13 +691,62 @@ MyApplet.prototype = {
                 });
             } catch(e) {}
         });
-        return order.map(k => seen[k]);
+
+        this._profileCache = order.map(k => seen[k]);
+        this._profileCacheTime = Date.now();
+
+        // Set up file monitors for auto-refresh (once)
+        this._setupProfileMonitors();
+
+        return this._profileCache;
+    },
+
+    _setupProfileMonitors: function() {
+        // Only set up once
+        if (this._profileMonitorsSetup) return;
+        this._profileMonitorsSetup = true;
+
+        [PROFILES_FILE, USER_PROFILES_FILE].forEach(file => {
+            try {
+                if (!GLib.file_test(file, GLib.FileTest.EXISTS)) return;
+                let gfile = Gio.File.new_for_path(file);
+                let monitor = gfile.monitor(Gio.FileMonitorFlags.NONE, null);
+                if (monitor) {
+                    monitor.connect("changed", (mon, f, otherFile, eventType) => {
+                        if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                            eventType === Gio.FileMonitorEvent.CHANGED) {
+                            this._profileCache = null; // invalidate cache
+                            if (this.menu && this.menu.isOpen) {
+                                this._buildMenu();
+                            }
+                        }
+                    });
+                    this._profilesMonitors.push(monitor);
+                }
+            } catch(e) {}
+        });
     },
 
     // ── Action runner ─────────────────────────────────────────────────────────
 
     _runRes: function(arg) {
         Util.spawn([RES_CMD].concat(arg.split(" ")));
+
+        // Track session start/stop and last used profile
+        let args = arg.split(" ");
+        if (args.length >= 3 && args[0] === "session" && args[1] === "start") {
+            this._trackSessionStart();
+            // Store last used profile (the third arg is the profile key)
+            this._lastUsedProfile = args[2];
+            try {
+                let lastFile = GLib.get_home_dir() + "/.config/remote-studio/.last_used_profile";
+                GLib.mkdir_with_parents(GLib.get_home_dir() + "/.config/remote-studio", 0o755);
+                GLib.file_set_contents(lastFile, this._lastUsedProfile);
+            } catch(e) {}
+        } else if (arg === "session stop") {
+            this._clearSessionUptime();
+        }
+
         // Refresh label and menu after action settles
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
             this._scheduleUpdate();
@@ -335,14 +755,57 @@ MyApplet.prototype = {
         });
     },
 
+    _getLastUsedProfile: function() {
+        if (this._lastUsedProfile) return this._lastUsedProfile;
+        try {
+            let f = GLib.get_home_dir() + "/.config/remote-studio/.last_used_profile";
+            if (GLib.file_test(f, GLib.FileTest.EXISTS)) {
+                let [ok, buf] = GLib.file_get_contents(f);
+                if (ok) {
+                    let val = buf.toString().trim();
+                    if (val) { this._lastUsedProfile = val; return val; }
+                }
+            }
+        } catch(e) {}
+        return null;
+    },
+
+    // ── Confirmation pattern ─────────────────────────────────────────────
+
+    _requestConfirm: function(key, label, callback) {
+        if (this._confirmItems[key]) {
+            // Already in confirmation mode — execute on second click
+            GLib.source_remove(this._confirmItems[key].timeoutId);
+            delete this._confirmItems[key];
+            callback();
+            this._buildMenu();
+            return;
+        }
+
+        // Show "Confirm?" state — auto-cancels after CONFIRM_TIMEOUT_MS
+        this._confirmItems[key] = {
+            timeoutId: GLib.timeout_add(GLib.PRIORITY_DEFAULT, CONFIRM_TIMEOUT_MS, () => {
+                delete this._confirmItems[key];
+                if (this.menu && this.menu.isOpen) this._buildMenu();
+                return GLib.SOURCE_REMOVE;
+            }),
+            callback: callback
+        };
+        this._buildMenu();
+    },
+
+    _isConfirming: function(key) {
+        return !!this._confirmItems[key];
+    },
+
     // ── Submenu helpers ───────────────────────────────────────────────────────
 
     // Create a collapsible group; persists open/closed state across rebuilds
     _makeGroup: function(title, stateKey) {
         let group = new PopupMenu.PopupSubMenuMenuItem(title);
-        if (_groupOpen[stateKey]) group.menu.open(false);
+        if (this._groupOpen[stateKey]) group.menu.open(false);
         group.menu.connect("open-state-changed", (menu, open) => {
-            _groupOpen[stateKey] = open;
+            this._groupOpen[stateKey] = open;
         });
         return group;
     },
@@ -357,7 +820,7 @@ MyApplet.prototype = {
     _subTerminal: function(group, label, icon, arg) {
         let item = new PopupMenu.PopupIconMenuItem(label, icon, St.IconType.SYMBOLIC);
         item.connect("activate", () => {
-            Util.spawn(["x-terminal-emulator", "-e", RES_CMD].concat(arg.split(" ")));
+            Util.spawn([this._findTerminal(), "-e", RES_CMD].concat(arg.split(" ")));
         });
         group.menu.addMenuItem(item);
     },
@@ -366,43 +829,125 @@ MyApplet.prototype = {
         group.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     },
 
+    _subConfirmItem: function(group, label, icon, confirmKey, actionArg, destructiveLabel) {
+        let isConfirming = this._isConfirming(confirmKey);
+        let itemLabel = isConfirming ? (destructiveLabel || "⚠ Confirm?") : label;
+        let itemIcon  = isConfirming ? "dialog-warning-symbolic" : icon;
+        let item = new PopupMenu.PopupIconMenuItem(itemLabel, itemIcon, St.IconType.SYMBOLIC);
+        if (isConfirming) {
+            item.label.style = 'color: #ff4444; font-weight: bold;';
+        }
+        item.connect("activate", () => {
+            this._requestConfirm(confirmKey, label, () => {
+                this._runRes(actionArg);
+            });
+        });
+        group.menu.addMenuItem(item);
+        return item;
+    },
+
     // ── Menu builder ──────────────────────────────────────────────────────────
 
     _buildMenu: function() {
         this.menu.removeAll();
 
         let currentMode    = this._getCurrentMode();
-        let profiles       = this._loadProfiles();
+        let profiles       = this._loadProfiles(false);
         let defaultProfile = this._getDefaultProfile();
         let directAddr     = this._getDirectAddress();
+        let activeIPs      = this._getActiveIPs();
+        let uptime         = this._getSessionUptime();
 
         // Smart: if the current mode belongs to a profile, ensure presets group
         // is open so the active checkmark is visible
         let activeIsInProfiles = profiles.some(p => p.label === currentMode);
-        if (activeIsInProfiles) _groupOpen.presets = true;
+        if (activeIsInProfiles) this._groupOpen.presets = true;
+
+        // ── 👥 Active Sessions ────────────────────────────────────────────
+        if (activeIPs && activeIPs.length > 0) {
+            let activeGroup = this._makeGroup("👥  Active Sessions (" + activeIPs.length + ")", "active_sessions");
+            activeIPs.forEach(ip => {
+                // Make each IP a clickable item with disconnect submenu
+                let ipItem = new PopupMenu.PopupIconMenuItem(
+                    "🔌  " + ip, "network-workgroup-symbolic", St.IconType.SYMBOLIC
+                );
+                // Sub-menu for disconnect actions
+                let disconnectItem = new PopupMenu.PopupIconMenuItem(
+                    "  ⏹  Disconnect All", "media-playback-stop-symbolic", St.IconType.SYMBOLIC
+                );
+                disconnectItem.connect("activate", () => {
+                    this._runRes("session stop");
+                });
+                ipItem.menu.addMenuItem(disconnectItem);
+                activeGroup.menu.addMenuItem(ipItem);
+            });
+            this.menu.addMenuItem(activeGroup);
+        }
 
         // ── 📺 Device Presets ─────────────────────────────────────────────────
         let presetsGroup = this._makeGroup("📺  Device Presets", "presets");
-        profiles.forEach(p => {
+
+        // Sort: favorites first, then alphabetically
+        let sortedProfiles = [...profiles].sort((a, b) => {
+            let aFav = this._favorites.indexOf(a.key) >= 0 ? 0 : 1;
+            let bFav = this._favorites.indexOf(b.key) >= 0 ? 0 : 1;
+            if (aFav !== bFav) return aFav - bFav;
+            return (a.label || "").localeCompare(b.label || "");
+        });
+
+        sortedProfiles.forEach(p => {
             let active = (currentMode === p.label);
             let mark   = active ? "✓  " : "     ";
+            let star   = this._favorites.indexOf(p.key) >= 0 ? "★ " : "";
             let icon   = this._iconForMode(p.label);
             let item   = new PopupMenu.PopupIconMenuItem(
-                mark + p.label + "  " + p.width + "×" + p.height,
+                mark + star + p.label + "  " + p.width + "×" + p.height,
                 icon, St.IconType.SYMBOLIC
             );
             if (active) item.setShowDot(true);
             item.connect("activate", () => this._runRes(p.key));
+
+            // Right-click to toggle favorite
+            try {
+                item.actor.button_release_event.connect((actor, event) => {
+                    if (event.get_button() === 3) { // Right mouse button
+                        this._toggleFavorite(p.key);
+                        return true;
+                    }
+                    return false;
+                });
+            } catch(e) {}
+
             presetsGroup.menu.addMenuItem(item);
         });
         this.menu.addMenuItem(presetsGroup);
 
+        // ── Custom Resolution ─────────────────────────────────────────────
+        let customItem = new PopupMenu.PopupIconMenuItem(
+            "✏  Custom Resolution…", "preferences-desktop-display-symbolic", St.IconType.SYMBOLIC
+        );
+        customItem.connect("activate", () => this._promptCustomResolution());
+        presetsGroup.menu.addMenuItem(customItem);
+
         // ── ⚡ Performance & Session ──────────────────────────────────────────
         let perfGroup = this._makeGroup("⚡  Performance & Session", "performance");
+
+        // Show uptime if session is active
+        if (uptime > 0) {
+            let uptimeStr = this._formatUptime(uptime);
+            let uptimeItem = new PopupMenu.PopupIconMenuItem(
+                "⏱  Session Uptime: " + uptimeStr,
+                "clock-symbolic", St.IconType.SYMBOLIC
+            );
+            uptimeItem.actor.set_reactive(false);
+            perfGroup.menu.addMenuItem(uptimeItem);
+            this._subSep(perfGroup);
+        }
+
         this._subItem(perfGroup, "▶  Start Session  (" + defaultProfile + ")",
             "media-playback-start-symbolic", "session start " + defaultProfile);
-        this._subItem(perfGroup, "⏹  Stop Session",
-            "media-playback-stop-symbolic", "session stop");
+        this._subConfirmItem(perfGroup, "⏹  Stop Session",
+            "media-playback-stop-symbolic", "stop_session", "session stop", "⛔  Tap again to stop");
         this._subSep(perfGroup);
         this._subItem(perfGroup, "Toggle Speed Mode",  "go-jump-symbolic",              "speed");
         this._subItem(perfGroup, "Toggle Caffeine",    "battery-symbolic",              "caf");
@@ -426,7 +971,8 @@ MyApplet.prototype = {
         this._subTerminal(sysGroup,"Run Doctor",                   "dialog-information-symbolic",   "doctor");
         this._subTerminal(sysGroup,"Show Tailnet Address",         "network-vpn-symbolic",          "tailnet");
         this._subTerminal(sysGroup,"Tailnet Doctor",               "network-wired-symbolic",        "tailnet doctor");
-        this._subItem(sysGroup,    "Emergency Display Reset",      "view-refresh-symbolic",         "reset");
+        this._subConfirmItem(sysGroup, "Emergency Display Reset", "view-refresh-symbolic",
+            "display_reset", "reset", "⛔  Tap again to reset");
         this.menu.addMenuItem(sysGroup);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -449,27 +995,149 @@ MyApplet.prototype = {
         let muteLabel = this._notifyEnabled ? "🔕  Mute Connect/Disconnect Alerts" : "🔔  Unmute Alerts";
         let muteIcon  = this._notifyEnabled ? "notifications-disabled-symbolic" : "notification-symbolic";
         let muteItem  = new PopupMenu.PopupIconMenuItem(muteLabel, muteIcon, St.IconType.SYMBOLIC);
-        muteItem.connect("activate", () => { this._notifyEnabled = !this._notifyEnabled; this._buildMenu(); });
+        muteItem.connect("activate", () => {
+            this._notifyEnabled = !this._notifyEnabled;
+            if (this.settings) {
+                try { this.settings.setValue("notify_enabled", this._notifyEnabled); } catch(e) {}
+            }
+            this._buildMenu();
+        });
         this.menu.addMenuItem(muteItem);
 
         let tuiItem = new PopupMenu.PopupIconMenuItem(
             "⌨  Open Full TUI Dashboard", "utilities-terminal-symbolic", St.IconType.SYMBOLIC
         );
-        tuiItem.connect("activate", () => { Util.spawn(["x-terminal-emulator", "-e", RES_CMD]); });
+        tuiItem.connect("activate", () => { Util.spawn([this._findTerminal(), "-e", RES_CMD]); });
         this.menu.addMenuItem(tuiItem);
+    },
+
+    // ── Custom Resolution Prompt ──────────────────────────────────────────
+
+    _promptCustomResolution: function() {
+        let currentRes = this._getCurrentResolution();
+        if (!currentRes) currentRes = "1920x1080";
+        Util.spawn(['bash', '-c',
+            'RESULT=$(zenity --entry --title="Remote Studio: Custom Resolution" ' +
+            '--text="Enter WxH (e.g. 1920x1080 or 1920×1080):" ' +
+            '--entry-text="' + currentRes + '" 2>/dev/null) && ' +
+            'if [ -n "$RESULT" ]; then ' +
+            '  RESULT=$(echo "$RESULT" | tr "×" "x" | tr -d " "); ' +
+            '  echo "$RESULT" | grep -qE "^[0-9]+x[0-9]+$" && ' +
+            '  ' + RES_CMD + ' custom "$RESULT"; ' +
+            'fi'
+        ]);
+        // Refresh after a short delay to pick up new state
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            this._scheduleUpdate();
+            this._buildMenu();
+            return GLib.SOURCE_REMOVE;
+        });
     },
 
     // ── Applet lifecycle ──────────────────────────────────────────────────────
 
+    _handleMiddleClick: function() {
+        let action = this._middleClickAction || "menu";
+        switch (action) {
+            case "speed":
+                this._runRes("speed");
+                break;
+            case "night":
+                this._runRes("night");
+                break;
+            case "session":
+                if (this._sessionStart) {
+                    this._clearSessionUptime();
+                    this._runRes("session stop");
+                } else {
+                    let defaultProfile = this._getDefaultProfile();
+                    this._trackSessionStart();
+                    this._runRes("session start " + defaultProfile);
+                }
+                break;
+            case "privacy":
+                this._runRes("privacy");
+                break;
+            case "copy":
+                let directAddr = this._getDirectAddress();
+                if (directAddr) {
+                    Util.spawn(["bash", "-c",
+                        "printf %s \"$1\" | xclip -selection clipboard",
+                        "remote-studio", directAddr]);
+                }
+                break;
+            case "menu":
+            default:
+                this._buildMenu();
+                this._scheduleUpdate();
+                this.menu.toggle();
+                break;
+        }
+
+        if (action !== "menu") {
+            // Show brief visual feedback by triggering quick update
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                this._readStatus();
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    },
+
     on_applet_clicked: function(event) {
+        // Debounce: ignore rapid clicks within 200ms
+        let now = Date.now();
+        if (now - this._lastClick < 200) return;
+        this._lastClick = now;
+
+        // Check for middle-click (button 2) to trigger quick action
+        if (event && event.get_button) {
+            let button = event.get_button();
+            if (button === 2) {
+                this._handleMiddleClick();
+                return;
+            }
+            // Right-click behavior
+            if (button === 3) {
+                // Same as left click for now — opens menu
+            }
+        }
+
         this._buildMenu();
         this._scheduleUpdate();
         this.menu.toggle();
     },
 
+    on_applet_middle_clicked: function() {
+        this._handleMiddleClick();
+    },
+
     on_applet_removed_from_panel: function() {
         if (this._timeout)     GLib.source_remove(this._timeout);
-        if (this._fileMonitor) this._fileMonitor.cancel();
+        if (this._dbusWatchId !== undefined) {
+            try { Gio.DBus.session.unwatch_name(this._dbusWatchId); } catch(e) {}
+        }
+        if (this._dbusRetryTimeout) {
+            GLib.source_remove(this._dbusRetryTimeout);
+            this._dbusRetryTimeout = null;
+        }
+        if (this._dbusProxy && this._dbusProxySignalId) {
+            this._dbusProxy.disconnectSignal(this._dbusProxySignalId);
+        }
+        if (this._statusFileMonitor) {
+            try { this._statusFileMonitor.cancel(); } catch(e) {}
+            this._statusFileMonitor = null;
+        }
+        this._profilesMonitors.forEach(m => { try { m.cancel(); } catch(e) {} });
+        this._profilesMonitors = [];
+        // Cancel any pending confirmations
+        for (let key in this._confirmItems) {
+            GLib.source_remove(this._confirmItems[key].timeoutId);
+        }
+        this._confirmItems = {};
+        // Clean up settings
+        if (this.settings) {
+            try { this.settings.finalize(); } catch(e) {}
+        }
     },
 };
 

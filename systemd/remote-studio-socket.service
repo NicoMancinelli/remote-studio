@@ -1,0 +1,32 @@
+[Unit]
+Description=Remote Studio Daemon (Socket Activated)
+Documentation=https://github.com/nicomancinelli/remote-studio
+After=graphical-session.target
+Requires=remote-studio.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/res daemon --socket-activated
+
+# Give the daemon 30s to send READY=1 before systemd considers it failed
+TimeoutStartSec=30
+
+# If the daemon exits, systemd will re-activate it on next socket connection
+Restart=on-failure
+RestartSec=5
+
+# Stop the daemon after 5 minutes of idle (no connections).
+# Socket activation will restart it on next connection.
+TimeoutStopSec=10
+
+# Environment — inherit DISPLAY for X11/Wayland operations
+PassEnvironment=DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS
+
+# Hardening
+ProtectSystem=strict
+ReadWritePaths=/tmp %h/.config/remote-studio %h/.local/share/remote-studio
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=graphical-session.target

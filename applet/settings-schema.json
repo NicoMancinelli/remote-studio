@@ -1,12 +1,12 @@
 {
     "layout": {
         "type": "layout",
-        "keys": ["default_profile", "auto_session", "notify_enabled"]
+        "keys": ["default_profile", "auto_session", "auto_session_profile", "notify_enabled", "label_color_enabled", "uptime_display", "show_latency_bars", "middle_click_action", "dbus_reconnect", "confirm_destructive"]
     },
     "default_profile": {
         "type": "combobox",
         "default": "mac",
-        "description": "Default Session Profile",
+        "description": "Default Session Profile (quick-start button)",
         "options": {
             "Mac (2560x1664)": "mac",
             "Mac 15\" (2880x1864)": "mac15",
@@ -14,17 +14,71 @@
             "iPad Pro 11\" (1668x2388)": "ipad",
             "iPhone Portrait (1170x2532)": "iphonep",
             "iPhone Landscape (2532x1170)": "iphonel",
-            "Standard Reset (1024x768)": "fallback"
+            "Standard Reset (1024x768)": "fallback",
+            "Last Used Profile": "last"
         }
     },
     "auto_session": {
         "type": "checkbox",
         "default": false,
-        "description": "Automatically start default session upon connection"
+        "description": "Automatically start session when a remote connection is detected"
+    },
+    "auto_session_profile": {
+        "type": "combobox",
+        "default": "last",
+        "description": "Profile to auto-start (or 'Last Used')",
+        "dependency": "auto_session",
+        "options": {
+            "Last Used Profile": "last",
+            "Mac (2560x1664)": "mac",
+            "Mac 15\" (2880x1864)": "mac15",
+            "iPad Pro 13\" (2064x2752)": "ipad13",
+            "iPad Pro 11\" (1668x2388)": "ipad",
+            "iPhone Portrait (1170x2532)": "iphonep",
+            "Standard Reset (1024x768)": "fallback"
+        }
     },
     "notify_enabled": {
         "type": "checkbox",
         "default": true,
         "description": "Enable connect/disconnect desktop notifications"
+    },
+    "label_color_enabled": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Color-code the panel label by connection state"
+    },
+    "uptime_display": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Show session uptime in the panel label"
+    },
+    "show_latency_bars": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Show latency quality indicator (bars) in the tooltip"
+    },
+    "middle_click_action": {
+        "type": "combobox",
+        "default": "menu",
+        "description": "Action on middle-click of the panel icon",
+        "options": {
+            "Open Menu (default)": "menu",
+            "Toggle Speed Mode": "speed",
+            "Toggle Night Shift": "night",
+            "Start/Stop Session": "session",
+            "Privacy Shield": "privacy",
+            "Copy Direct Address": "copy"
+        }
+    },
+    "dbus_reconnect": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Auto-reconnect to DBus daemon if it restarts"
+    },
+    "confirm_destructive": {
+        "type": "checkbox",
+        "default": true,
+        "description": "Require confirmation before Stop Session and Reset"
     }
 }

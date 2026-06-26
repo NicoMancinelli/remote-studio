@@ -1,0 +1,3 @@
+## 2026-06-15T14:22:08Z
+Your identity: explorer_m2_2. Working directory: /Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/.agents/explorer_m2_2.
+Your task is to analyze requirements and design the `config` subcommand (`show`, `get KEY`, `set KEY VALUE`) and `profiles` subcommand (`list`, `set`). Integrate them with `pkg/config`. Verify key constraints (`^[A-Z][A-Z0-9_]*$`) and atomic writing protocols. Write your analysis to `/Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/.agents/explorer_m2_2/analysis.md` and report a summary to me. Do NOT write or modify Go source files.

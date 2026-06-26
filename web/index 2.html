@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Studio Control Panel</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar glass-panel">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="url(#gradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><defs><linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00f2fe"/><stop offset="100%" stop-color="#4facfe"/></linearGradient></defs><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            </div>
+            <nav>
+                <div class="nav-item active"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg></div>
+                <div class="nav-item"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></div>
+            </nav>
+        </aside>
+        
+        <main class="main-content">
+            <header>
+                <div>
+                    <h1>Remote Studio</h1>
+                    <p class="subtitle">Control Panel</p>
+                </div>
+                <div class="header-actions">
+                    <div class="status-badge" id="conn-status">
+                        <span class="dot red" id="status-dot"></span> <span id="status-text">Disconnected</span>
+                    </div>
+                </div>
+            </header>
+
+            <div class="dashboard-grid">
+                <div class="glass-card">
+                    <h3>Active Display</h3>
+                    <div class="metric-circle">
+                        <div class="circle-inner">
+                            <span id="active-display-name">Idle</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="glass-card">
+                    <h3>Performance & Comfort</h3>
+                    <div class="toggle-group">
+                        <button class="glass-btn" onclick="sendCommand('theme')" data-tooltip="Invert colors for OLED screens to save power">Toggle OLED Theme</button>
+                        <button class="glass-btn" onclick="sendCommand('night')" data-tooltip="Reduce blue light for eye comfort at night">Toggle Night Shift</button>
+                    </div>
+                    <div class="slider-container" style="margin-top: 20px;" data-tooltip="Slide to instantly adjust the size of Cinnamon desktop fonts and UI elements">
+                        <label for="scale-slider">UI Text Scaling <span id="scale-val">100%</span></label>
+                        <input type="range" min="0.5" max="2.0" step="0.1" id="scale-slider" value="1.0">
+                    </div>
+                </div>
+            </div>
+
+            <h2 class="section-title">Device Presets</h2>
+            <div class="presets-grid">
+                <div class="preset-card glass-card" onclick="sendCommand('ipad')" data-tooltip="Switch resolution to perfectly match a 12.9&quot; iPad Pro">
+                    <div class="preset-header">
+                        <h4>iPad Pro</h4>
+                        <span class="badge">Preset</span>
+                    </div>
+                    <p class="specs">2064 x 2752 • Auto-Scaled</p>
+                    <button class="action-btn">Apply Profile</button>
+                </div>
+                
+                <div class="preset-card glass-card" onclick="sendCommand('mac')" data-tooltip="Switch resolution to perfectly match a MacBook or Mac Studio">
+                    <div class="preset-header">
+                        <h4>Mac Studio</h4>
+                        <span class="badge">Preset</span>
+                    </div>
+                    <p class="specs">2560 x 1664 • Auto-Scaled</p>
+                    <button class="action-btn">Apply Profile</button>
+                </div>
+
+                <div class="preset-card glass-card" onclick="sendCommand('fallback')" data-tooltip="Reset display to standard 1080p for general remote access">
+                    <div class="preset-header">
+                        <h4>Windows / 1080p</h4>
+                        <span class="badge">Preset</span>
+                    </div>
+                    <p class="specs">1920 x 1080 • Standard</p>
+                    <button class="action-btn">Apply Profile</button>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="main.js"></script>
+</body>
+</html>

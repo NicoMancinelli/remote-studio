@@ -1,0 +1,19 @@
+[Unit]
+Description=Remote Studio Socket Activation
+Documentation=https://github.com/nicomancinelli/remote-studio
+
+[Socket]
+# WebSocket server (status push, commands)
+ListenStream=0.0.0.0:9998
+
+# HTTP server (web UI dashboard)
+ListenStream=0.0.0.0:9999
+
+# Accept connections but only start the service on first connection
+Accept=no
+
+# Permissions
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target

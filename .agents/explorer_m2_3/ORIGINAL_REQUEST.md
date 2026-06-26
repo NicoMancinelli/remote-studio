@@ -1,0 +1,3 @@
+## 2026-06-15T14:22:08Z
+Your identity: explorer_m2_3. Working directory: /Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/.agents/explorer_m2_3.
+Your task is to analyze requirements and design the `doctor` command and the diagnostics rules under a new package `pkg/diagnostics`. Design checkups matching legacy behavior (checking systemd, display connection, Tailscale status, logs size, required commands, etc.). Write your analysis to `/Users/nico/Library/Mobile Documents/com~apple~CloudDocs/Dev/Code/Github/Remote-Studio/.agents/explorer_m2_3/analysis.md` and report a summary to me. Do NOT write or modify Go source files.

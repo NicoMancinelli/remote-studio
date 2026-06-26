@@ -1,0 +1,9 @@
+#!/bin/bash
+if [ "$#" -eq 0 ]; then
+  echo "HDMI-1 connected primary 2560x1664+0+0"
+  echo "   2560x1664     59.95*+"
+  echo "   1920x1080     60.00"
+else
+  echo "xrandr: success" >&2
+  exit 0
+fi

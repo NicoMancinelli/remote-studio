@@ -1,0 +1,60 @@
+#!/bin/bash
+# Ensure XDG_RUNTIME_DIR is set; fallback to /tmp if not
+MOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+MOCK_FILE="${MOCK_DIR}/gsettings.mock"
+touch "$MOCK_FILE"
+
+if [ "$1" = "set" ]; then
+  SCHEMA="$2"
+  KEY="$3"
+  # value is everything from the 4th argument onwards
+  SHIFTED_ARGS=("${@:4}")
+  VALUE="${SHIFTED_ARGS[*]}"
+  # Remove existing key if it exists
+  grep -v "^${SCHEMA}\.${KEY}=" "$MOCK_FILE" > "${MOCK_FILE}.tmp" 2>/dev/null
+  mv "${MOCK_FILE}.tmp" "$MOCK_FILE"
+  echo "${SCHEMA}.${KEY}=${VALUE}" >> "$MOCK_FILE"
+  exit 0
+elif [ "$1" = "get" ]; then
+  SCHEMA="$2"
+  KEY="$3"
+  # Check if the key exists in the mock file
+  VAL=$(grep "^${SCHEMA}\.${KEY}=" "$MOCK_FILE" | cut -d'=' -f2-)
+  if [ -n "$VAL" ]; then
+    echo "$VAL"
+    exit 0
+  fi
+  # Provide default values if unset
+  case "${SCHEMA}.${KEY}" in
+    "org.cinnamon.desktop-effects")
+      echo "true"
+      ;;
+    "org.cinnamon.desktop.screensaver.lock-enabled")
+      echo "true"
+      ;;
+    "org.cinnamon.desktop.interface.gtk-theme")
+      echo "'Adwaita'"
+      ;;
+    "org.cinnamon.desktop.interface.scaling-factor")
+      echo "1"
+      ;;
+    "org.cinnamon.desktop.interface.text-scaling-factor")
+      echo "1.0"
+      ;;
+    "org.cinnamon.desktop.interface.cursor-size")
+      echo "24"
+      ;;
+    "org.cinnamon.desktop.background.picture-uri")
+      echo "'file:///usr/share/backgrounds/default.png'"
+      ;;
+    "org.cinnamon.settings-daemon.plugins.color.night-light-enabled")
+      echo "false"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+  exit 0
+else
+  exit 0
+fi

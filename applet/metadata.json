@@ -1,7 +1,7 @@
 {
     "uuid": "remote-studio@neek",
     "name": "Remote Studio",
-    "description": "Quickly switch resolutions and optimize for RustDesk",
+    "description": "Remote desktop session manager - switch resolutions, manage RustDesk sessions, monitor connections",
     "icon": "video-display",
-    "version": "8.1"
+    "version": "9.0"
 }

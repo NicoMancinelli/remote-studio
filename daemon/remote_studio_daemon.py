@@ -30,6 +30,7 @@ class RemoteStudioDaemon:
     def __init__(self):
         self.status = "Idle"
         self.prev_users = 0
+        self.active_ips = []
         self.poll_interval = 5
 
         # D-Bus Setup
@@ -46,7 +47,14 @@ class RemoteStudioDaemon:
 
     def get_property(self, connection, sender, object_path, interface_name, property_name, user_data):
         if property_name == "Status":
-            return GLib.Variant("s", self.status)
+            try:
+                json_status = subprocess.check_output("res status --json", shell=True, text=True).strip()
+                data = json.loads(json_status)
+                data["active_ips"] = getattr(self, "active_ips", [])
+                dbus_str = json.dumps(data)
+            except Exception:
+                dbus_str = '{"mode": "Error"}'
+            return GLib.Variant("s", dbus_str)
 
     def set_property(self, connection, sender, object_path, interface_name, property_name, value, user_data):
         return False
@@ -57,7 +65,15 @@ class RemoteStudioDaemon:
             invocation.return_value(None)
 
     def emit_status_changed(self):
-        self.dbus_conn.emit_signal(None, OBJECT_PATH, BUS_NAME, "StatusChanged", GLib.Variant("(s)", (self.status,)))
+        broadcast_status_to_websockets()
+        try:
+            json_status = subprocess.check_output("res status --json", shell=True, text=True).strip()
+            data = json.loads(json_status)
+            data["active_ips"] = self.active_ips
+            dbus_str = json.dumps(data)
+        except Exception:
+            dbus_str = '{"mode": "Error"}'
+        self.dbus_conn.emit_signal(None, OBJECT_PATH, BUS_NAME, "StatusChanged", GLib.Variant("(s)", (dbus_str,)))
 
     def poll_network(self):
         try:
@@ -66,6 +82,7 @@ class RemoteStudioDaemon:
         except Exception:
             ips = []
 
+        self.active_ips = ips
         users = len(ips)
         
         if users > 0 and self.prev_users == 0:
@@ -130,6 +147,7 @@ class RemoteStudioDaemon:
         except Exception:
             pass
             
+        broadcast_status_to_websockets()
         return True # Continue GLib loop
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
@@ -143,10 +161,31 @@ def run_http_server():
 
 connected_clients = set()
 
+def broadcast_status_to_websockets():
+    if not connected_clients or ws_loop is None:
+        return
+    try:
+        json_status = subprocess.check_output("res status --json", shell=True, text=True).strip()
+    except Exception:
+        json_status = '{"mode": "Error", "status": "Error fetching status"}'
+    
+    async def _broadcast():
+        message = json.dumps({"type": "status_full", "data": json.loads(json_status)})
+        coros = [client.send(message) for client in connected_clients]
+        if coros:
+            await asyncio.gather(*coros, return_exceptions=True)
+            
+    asyncio.run_coroutine_threadsafe(_broadcast(), ws_loop)
+
+
 async def ws_handler(websocket, path):
     connected_clients.add(websocket)
     try:
-        await websocket.send(json.dumps({"type": "status", "data": daemon.status}))
+        try:
+            json_status = subprocess.check_output("res status --json", shell=True, text=True).strip()
+            await websocket.send(json.dumps({"type": "status_full", "data": json.loads(json_status)}))
+        except Exception:
+            pass
         async for message in websocket:
             data = json.loads(message)
             if data.get("action") == "command":
@@ -156,8 +195,12 @@ async def ws_handler(websocket, path):
     finally:
         connected_clients.remove(websocket)
 
+ws_loop = None
+
 def run_ws_server():
-    loop = asyncio.new_event_loop()
+    global ws_loop
+    ws_loop = asyncio.new_event_loop()
+    loop = ws_loop
     asyncio.set_event_loop(loop)
     start_server = websockets.serve(ws_handler, "0.0.0.0", 9998)
     loop.run_until_complete(start_server)

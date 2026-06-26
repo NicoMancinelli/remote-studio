@@ -1,0 +1,49 @@
+#!/bin/bash
+if [ "$1" = "ip" ]; then
+  echo "100.1.2.3"
+  exit 0
+elif [ "$1" = "status" ]; then
+  if [[ "$*" == *"--json"* ]]; then
+    cat << 'EOF'
+{
+  "Peer": {
+    "node1-id": {
+      "TailscaleIPs": ["100.64.0.5"],
+      "OS": "macOS"
+    },
+    "node2-id": {
+      "TailscaleIPs": ["100.64.0.6"],
+      "OS": "iOS"
+    },
+    "node3-id": {
+      "TailscaleIPs": ["100.64.0.7"],
+      "OS": "windows"
+    }
+  }
+}
+EOF
+  else
+    # default plain text output
+    echo "100.1.2.3       localhost            linux   active"
+    echo "100.64.0.5      node1                macOS   active"
+    echo "100.64.0.6      node2                iOS     active"
+    echo "100.64.0.7      node3                windows active"
+  fi
+  exit 0
+elif [ "$1" = "exit-node" ]; then
+  if [ "$2" = "list" ]; then
+    echo "100.64.0.5      node1                macOS   selected"
+  fi
+  exit 0
+elif [ "$1" = "ping" ]; then
+  echo "pong from $2 (100.64.0.5) in 10ms"
+  exit 0
+elif [ "$1" = "netcheck" ]; then
+  echo "Report:"
+  echo "* UDP: true"
+  echo "* IPv4: yes, 100.1.2.3:12345"
+  echo "* IPv6: no"
+  exit 0
+else
+  exit 0
+fi

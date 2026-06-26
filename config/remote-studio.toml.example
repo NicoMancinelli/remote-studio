@@ -1,0 +1,135 @@
+# ──────────────────────────────────────────────────────────────
+# Remote Studio — declarative TOML configuration
+# ──────────────────────────────────────────────────────────────
+#
+# Copy this file to one of:
+#   ~/.config/remote-studio/remote-studio.toml   (per-user)
+#   /etc/remote-studio/remote-studio.toml        (system-wide)
+#
+# Run `res config show-toml` to view the active merged config,
+# or `res config validate-toml` to check for issues.
+
+# ── General ──────────────────────────────────────────────────
+[general]
+
+# Config schema version (reserved for future migrations).
+version = "1"
+
+# Automatically start a display session when a remote client
+# connects via RustDesk (requires `res watch` or the user service).
+auto_session = false
+
+# Logging verbosity: "debug", "info", "warn", "error"
+log_level = "info"
+
+# Path to the main log file. ~ is expanded at runtime.
+log_path = "~/.remote_studio.log"
+
+# ── Display ──────────────────────────────────────────────────
+[display]
+
+# Display backend to use when starting a session.
+# "auto"    – detect Wayland first, fall back to X11
+# "x11"     – always use X11 / Xorg
+# "wayland" – always use Wayland compositor
+default_backend = "auto"
+
+# Key of the profile to apply when no explicit profile is given.
+default_profile = "mac"
+
+# ── Daemon ───────────────────────────────────────────────────
+[daemon]
+
+# How often the daemon polls for status updates (seconds).
+poll_interval = 5
+
+# Port the WebSocket server listens on (used by the Cinnamon applet).
+websocket_port = 9600
+
+# Port the HTTP health / status API listens on.
+http_port = 9601
+
+# If true, the daemon expects to be socket-activated by systemd
+# rather than binding its own sockets.
+socket_activated = false
+
+# ── Audio ────────────────────────────────────────────────────
+[audio]
+
+# PulseAudio / PipeWire virtual sink name created for remote audio.
+virtual_sink_name = "remote_studio_sink"
+
+# Automatically mute the physical (built-in) speakers during a
+# remote session to avoid echo and feedback.
+auto_mute_physical = true
+
+# ── Security ─────────────────────────────────────────────────
+[security]
+
+# Trust connections arriving over the Tailscale interface without
+# additional authentication.
+trust_tailscale = true
+
+# Restrict daemon API access to these IP addresses. An empty list
+# means "allow all" (combined with trust_tailscale above).
+allowed_ips = []
+
+# ── Profiles ─────────────────────────────────────────────────
+#
+# Each [[profiles]] block defines a display profile that `res`
+# can apply. Profiles set the virtual display resolution, DPI
+# scaling, text scaling factor, and cursor size.
+#
+# Fields:
+#   key         – short identifier used on the CLI (e.g. `res mac`)
+#   label       – human-readable description
+#   width       – horizontal resolution in pixels
+#   height      – vertical resolution in pixels
+#   scale       – DPI / UI scaling factor (1 = 100%, 2 = 200%)
+#   text_scale  – additional text scaling multiplier
+#   cursor_size – cursor size in pixels
+
+[[profiles]]
+key = "mac"
+label = "MacBook Air 13"
+width = 2560
+height = 1664
+scale = 1.0
+text_scale = 1.5
+cursor_size = 48
+
+[[profiles]]
+key = "mac15"
+label = "MacBook Air 15"
+width = 2880
+height = 1864
+scale = 1.0
+text_scale = 1.5
+cursor_size = 48
+
+[[profiles]]
+key = "ipad"
+label = "iPad Pro 11\""
+width = 2424
+height = 1664
+scale = 2.0
+text_scale = 1.1
+cursor_size = 48
+
+[[profiles]]
+key = "ipad13"
+label = "iPad Pro 13\""
+width = 2064
+height = 2752
+scale = 2.0
+text_scale = 1.1
+cursor_size = 48
+
+[[profiles]]
+key = "fallback"
+label = "Fallback 1920x1200"
+width = 1920
+height = 1200
+scale = 1.0
+text_scale = 1.1
+cursor_size = 32

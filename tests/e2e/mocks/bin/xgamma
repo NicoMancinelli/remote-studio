@@ -1,0 +1,26 @@
+#!/bin/bash
+MOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+MOCK_FILE="${MOCK_DIR}/xgamma.mock"
+touch "$MOCK_FILE"
+
+# If called with arguments to set gamma
+if [ "$#" -gt 0 ]; then
+  # check if it is setting to default 1.0
+  if [[ "$*" == *"-gamma 1.0"* ]]; then
+    echo "1.000" > "$MOCK_FILE"
+  else
+    # setting to night shift or something else
+    echo "0.800" > "$MOCK_FILE"
+  fi
+  exit 0
+fi
+
+# If called without arguments (querying)
+VAL=$(cat "$MOCK_FILE" 2>/dev/null)
+if [ -z "$VAL" ]; then
+  VAL="1.000"
+fi
+
+# Output string where the 4th field is the current gamma value.
+# This ensures that `awk '{print $4}'` yields the correct value (1.000 or 0.800).
+echo "-> Red 1.000 ${VAL}"

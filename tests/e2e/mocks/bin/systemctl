@@ -1,0 +1,104 @@
+#!/bin/bash
+# Ensure XDG_RUNTIME_DIR is set; fallback to /tmp if not
+MOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+MOCK_FILE="${MOCK_DIR}/systemctl.mock"
+touch "$MOCK_FILE"
+
+# If called with list-unit-files, handle it directly
+if [[ "$*" == *"list-unit-files"* ]]; then
+  echo "rustdesk.service enabled"
+  exit 0
+fi
+
+# If daemon-reload
+if [[ "$*" == *"daemon-reload"* ]]; then
+  exit 0
+fi
+
+ACTION=""
+SERVICE=""
+
+for arg in "$@"; do
+  case "$arg" in
+    is-active|start|stop|restart|enable|disable|status)
+      ACTION="$arg"
+      ;;
+    -*)
+      # skip flags
+      ;;
+    *)
+      # Keep the last non-flag argument as the service
+      SERVICE="$arg"
+      ;;
+  esac
+done
+
+# Normalize service name (remove .service if present)
+SERVICE="${SERVICE%.service}"
+
+if [ -z "$ACTION" ] || [ -z "$SERVICE" ]; then
+  # Default fallback if args are weird
+  exit 0
+fi
+
+# Helper function to get service state
+get_service_state() {
+  local svc="$1"
+  local val
+  val=$(grep "^${svc}=" "$MOCK_FILE" | cut -d'=' -f2)
+  if [ -n "$val" ]; then
+    echo "$val"
+  else
+    # Default state is active for tailscaled and rustdesk, inactive for others
+    if [ "$svc" = "rustdesk" ] || [ "$svc" = "tailscaled" ] || [ "$svc" = "tailscale" ]; then
+      echo "active"
+    else
+      echo "inactive"
+    fi
+  fi
+}
+
+# Helper function to set service state
+set_service_state() {
+  local svc="$1"
+  local state="$2"
+  grep -v "^${svc}=" "$MOCK_FILE" > "${MOCK_FILE}.tmp" 2>/dev/null
+  mv "${MOCK_FILE}.tmp" "$MOCK_FILE"
+  echo "${svc}=${state}" >> "$MOCK_FILE"
+}
+
+case "$ACTION" in
+  is-active)
+    STATE=$(get_service_state "$SERVICE")
+    echo "$STATE"
+    if [ "$STATE" = "active" ]; then
+      exit 0
+    else
+      exit 3  # systemctl returns non-zero when not active
+    fi
+    ;;
+  start)
+    set_service_state "$SERVICE" "active"
+    exit 0
+    ;;
+  stop)
+    set_service_state "$SERVICE" "inactive"
+    exit 0
+    ;;
+  restart)
+    set_service_state "$SERVICE" "active"
+    exit 0
+    ;;
+  enable)
+    exit 0
+    ;;
+  disable)
+    exit 0
+    ;;
+  status)
+    STATE=$(get_service_state "$SERVICE")
+    echo "* ${SERVICE}.service - Mock service for ${SERVICE}"
+    echo "   Active: ${STATE} since Mon 2026-06-15 10:00:00 UTC"
+    exit 0
+    ;;
+esac

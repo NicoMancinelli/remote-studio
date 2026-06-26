@@ -1,0 +1,2 @@
+#!/bin/bash
+echo "01:00.0 VGA compatible controller: NVIDIA Corporation GP104 [GeForce GTX 1080] (rev a1)"
