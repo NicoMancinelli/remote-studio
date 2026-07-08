@@ -43,8 +43,13 @@ Remote Studio is a display management suite for Linux Mint (Cinnamon) that optim
 
 - `res.sh`: Entrypoint, command dispatch, module loading.
 - `lib/core.sh`, `lib/engine.sh`, `lib/diagnostics.sh`, `lib/services.sh`, `lib/config.sh`, `lib/tui.sh`: Product logic.
-- `applet/applet.js`: Cinnamon UI and asynchronous status polling.
-- `install.sh`: Manages the complex symlink environment and Xorg setup.
+- `main.go` and `cmd/`, `pkg/`, `daemon/`: Go-based status/service daemon, virtual display, and DBus interface (the v9+ control plane sidecar). `lib/*.sh` still owns display switching; the Go side owns background services and the web UI bridge.
+- `applet/applet.js`: Cinnamon UI and status polling (GJS).
+- `applet/settings-schema.json`: Applet settings schema (notify toggle, middle-click action).
+- `web/`: Browser-side dashboard (Vite + React).
+- `install.sh`: Manages the symlink environment and Xorg setup.
+- `package/build-deb.sh` and `debian/`: Debian packaging.
+- `systemd/` and `daemon/`: Systemd socket + service units and the Python/Go daemons.
 - `config/xorg.conf`: The template for headless virtual buffer operations.
 
 ## Common Tasks for AI
