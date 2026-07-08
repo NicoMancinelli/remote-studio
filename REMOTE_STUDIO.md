@@ -86,30 +86,21 @@ For RustDesk over Tailscale, copy the safe defaults from `config/RustDesk_defaul
 
 ## CLI Reference
 
-```
-res help              Show all commands
-res mac               MacBook Air 13 2560x1664 (1x)
-res ipad              iPad Pro 2424x1664 (3:2, 2x)
-res iphonel           iPhone Landscape 2868x1320 (19.5:9, 2x)
-res iphonep           iPhone Portrait 1320x2868 (9:19.5, 2x)
-res speed             Toggle performance mode (animations/wallpaper)
-res theme             Toggle OLED dark/light theme
-res night             Toggle night shift (warm gamma)
-res caf               Toggle caffeine (disable screen lock)
-res privacy           Lock screen + blank monitor
-res fix               Fix clipboard + audio + keyboard
-res clip              Flush clipboard only
-res audio             Restart PulseAudio only
-res keys              Reset keyboard layout (US)
-res service           Restart RustDesk service (sudo)
-res reset             Reset to 1024x768
-res doctor            Check RustDesk, Tailscale, Xorg, profiles, and symlinks
-res tailnet           Show this host's Tailscale IP and RustDesk direct address
-res xorg [PATH]       Generate Xorg dummy config from profiles
-res session start mac Start an optimized RustDesk session
-res session stop      Restore state captured before session start
-res status            Pipe-delimited stats for applet
-```
+For the full command list, run `res help`. Common subcommands:
+
+| Command | Purpose |
+| :--- | :--- |
+| `res <profile>` | Apply a built-in profile (`mac`, `mac15`, `ipad`, `ipad13`, `iphonel`, `iphonep`, `fallback`, …) |
+| `res custom <W> <H> [scale]` | Apply an arbitrary resolution; offers to save as a profile |
+| `res speed` / `theme` / `night` / `caf` / `privacy` | Performance and comfort toggles |
+| `res doctor` | Diagnose symlinks, Xorg, RustDesk, Tailscale, renderer, and logs |
+| `res session start [profile] \| stop \| status` | Capture/restore display + toggle state |
+| `res watch [interval]` | Foreground connection watcher (RustDesk ESTAB polling) |
+| `res status` / `res status --json` / `res log [N]` | Pipe-delimited applet status, JSON for automation, log tail |
+| `res rustdesk apply <preset>` | Merge RustDesk quality/balanced/speed TOML presets while preserving identity |
+| `res tailnet [hosts\|peer NAME\|doctor]` | Tailscale status, peer listing, network diagnostics |
+
+See `res help` for the complete surface.
 
 ## TUI Dashboard
 
