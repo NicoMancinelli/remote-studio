@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"remote-studio/pkg/session"
 	"github.com/spf13/cobra"
@@ -38,8 +39,15 @@ func RegisterDynamicProfileCommands() {
 
 func Execute() {
 	RegisterDynamicProfileCommands()
+	// Cobra prints "Error: unknown command \"<name>\" for \"res\"" to stderr
+	// by default. We rewrite that message to use a capital "Unknown"
+	// (matching the historical bash-side wording) before printing it.
 	if err := RootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		msg := err.Error()
+		if strings.HasPrefix(msg, "unknown command ") {
+			msg = "Unknown command " + strings.TrimPrefix(msg, "unknown command ")
+		}
+		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(1)
 	}
 }

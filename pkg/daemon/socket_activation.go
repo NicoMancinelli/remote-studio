@@ -73,10 +73,12 @@ func GetListeners() (wsListener, httpListener net.Listener, socketActivated bool
 	return wsListener, httpListener, false, nil
 }
 
-// listenReuseAddr binds a TCP listener with SO_REUSEADDR enabled. Plain
-// net.Listen does not set the socket option, so a recently-killed listener
-// in TIME_WAIT would block the bind. SO_REUSEADDR lets us reclaim the port
-// immediately.
+// listenReuseAddr binds a TCP listener with SO_REUSEADDR enabled so the
+// daemon can recover from TIME_WAIT after a previous instance was killed
+// (matters for the e2e suite, which kills and restarts daemons in quick
+// succession on ports 9998/9999). We deliberately don't set SO_REUSEPORT:
+// sharing a port across processes would silently load-balance connections
+// across them, which we don't want for a control-plane daemon.
 func listenReuseAddr(network, address string) (net.Listener, error) {
 	cfg := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
