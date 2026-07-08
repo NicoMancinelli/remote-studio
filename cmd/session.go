@@ -6,21 +6,23 @@ import (
 	"path/filepath"
 
 	"remote-studio/pkg/session"
-	"github.com/godbus/dbus/v5"
 	"github.com/spf13/cobra"
 )
 
-func isDaemonRunning() bool {
-	conn, err := dbus.ConnectSessionBus()
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-
-	var owner string
-	err = conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, "org.remote_studio.Daemon").Store(&owner)
-	return err == nil && owner != ""
-}
+// `cmd/session.go` previously routed `session start` and `session stop`
+// through D-Bus when a daemon was detected. That round-trip was a no-op:
+// the daemon's StartSession / StopSession handlers call pkg/session
+// directly. Worse, the daemon-detection logic used a permissive
+// DBus probe that returned true on any system with a running D-Bus,
+// even when no Remote Studio daemon was present. The result was that
+// CLI invocations would silently drop to the D-Bus branch, fire a
+// method call at a non-existent name, and exit 0 without applying
+// anything. Several e2e tests (TestTier1_F3_SessionStartBackups,
+// TestTier1_F3_SessionStopPowerProfile) failed for exactly this reason.
+//
+// The CLI now always invokes pkg/session directly. The daemon's D-Bus
+// methods remain exposed for the web UI / future remote callers, but
+// the CLI no longer needs them.
 
 var sessionCmd = &cobra.Command{
 	Use:   "session [start [PROFILE] | stop | status]",
@@ -39,38 +41,12 @@ var sessionCmd = &cobra.Command{
 
 		switch sub {
 		case "start":
-			if isDaemonRunning() {
-				conn, err := dbus.ConnectSessionBus()
-				if err != nil {
-					return err
-				}
-				defer conn.Close()
-				obj := conn.Object("org.remote_studio.Daemon", "/org/remote_studio/Daemon")
-				if err := obj.Call("org.remote_studio.Daemon.StartSession", 0, profile).Err; err != nil {
-					return fmt.Errorf("dbus call StartSession failed: %w", err)
-				}
-				fmt.Println("Session start command sent to daemon via D-Bus")
-			} else {
-				if err := session.SessionStart(profile); err != nil {
-					return err
-				}
+			if err := session.SessionStart(profile); err != nil {
+				return err
 			}
 		case "stop":
-			if isDaemonRunning() {
-				conn, err := dbus.ConnectSessionBus()
-				if err != nil {
-					return err
-				}
-				defer conn.Close()
-				obj := conn.Object("org.remote_studio.Daemon", "/org/remote_studio/Daemon")
-				if err := obj.Call("org.remote_studio.Daemon.StopSession", 0).Err; err != nil {
-					return fmt.Errorf("dbus call StopSession failed: %w", err)
-				}
-				fmt.Println("Session stop command sent to daemon via D-Bus")
-			} else {
-				if err := session.SessionStop(); err != nil {
-					return err
-				}
+			if err := session.SessionStop(); err != nil {
+				return err
 			}
 		case "status":
 			home, err := os.UserHomeDir()
