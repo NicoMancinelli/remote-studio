@@ -64,6 +64,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// 3b. Stage the bash engine next to the Go binary so passthrough commands
+	// (e.g. `res init` -> `bash res.sh init`) can find it during the test.
+	bashEngine := filepath.Join(rootDir, "res.sh")
+	if _, err := os.Stat(bashEngine); err == nil {
+		if err := os.Symlink(bashEngine, filepath.Join(tempDir, "res.sh")); err != nil {
+			fmt.Printf("Warning: failed to stage res.sh for tests: %v\n", err)
+		}
+	}
+
 	// 4. Optionally launch a private D-Bus daemon
 	var dbusCmd *exec.Cmd
 	if _, err := exec.LookPath("dbus-daemon"); err == nil {
