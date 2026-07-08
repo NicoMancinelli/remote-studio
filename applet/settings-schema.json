@@ -1,7 +1,42 @@
 {
     "layout": {
         "type": "layout",
-        "keys": ["default_profile", "auto_session", "auto_session_profile", "notify_enabled", "label_color_enabled", "uptime_display", "show_latency_bars", "middle_click_action", "dbus_reconnect", "confirm_destructive"]
+        "pages": ["page_session", "page_panel", "page_behavior"],
+        "page_session": {
+            "type": "page",
+            "title": "Session",
+            "sections": ["section_profile", "section_auto"]
+        },
+        "page_panel": {
+            "type": "page",
+            "title": "Panel",
+            "sections": ["section_panel"]
+        },
+        "page_behavior": {
+            "type": "page",
+            "title": "Behavior",
+            "sections": ["section_behavior"]
+        },
+        "section_profile": {
+            "type": "section",
+            "title": "Default Profile",
+            "keys": ["default_profile"]
+        },
+        "section_auto": {
+            "type": "section",
+            "title": "Auto Session",
+            "keys": ["auto_session", "auto_session_profile"]
+        },
+        "section_panel": {
+            "type": "section",
+            "title": "Panel Label",
+            "keys": ["label_color_enabled", "uptime_display", "show_latency_bars"]
+        },
+        "section_behavior": {
+            "type": "section",
+            "title": "Behavior",
+            "keys": ["notify_enabled", "middle_click_action", "confirm_destructive", "dbus_reconnect"]
+        }
     },
     "default_profile": {
         "type": "combobox",
@@ -35,6 +70,7 @@
             "iPad Pro 13\" (2064x2752)": "ipad13",
             "iPad Pro 11\" (1668x2388)": "ipad",
             "iPhone Portrait (1170x2532)": "iphonep",
+            "iPhone Landscape (2532x1170)": "iphonel",
             "Standard Reset (1024x768)": "fallback"
         }
     },

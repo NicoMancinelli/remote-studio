@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Node-based unit tests for the applet's status parsing, panel label, color, and uptime logic (`tests/applet/applet.test.js`), wired into `make ci` along with JSON validation of the applet metadata and settings schema.
+- Applet settings UI now uses a proper paged layout (Session / Panel / Behavior) and offers iPhone Landscape as an auto-session profile.
 - `res status --json` for automation while preserving the pipe-delimited applet status file.
 - `make ci` and `make release-check` local guardrails.
 - Bats coverage for JSON status output and applet status file preservation.
@@ -10,6 +12,14 @@
 - Debian package builds now force root-owned archive entries instead of preserving the local build user.
 
 ### Fixed
+- Applet no longer crashes on load: settings are bound via `Settings.AppletSettings` (the previous `Settings.Binding` class does not exist in Cinnamon).
+- Applet menu no longer breaks when remote users are connected: the Active Sessions group listed IPs via an invalid nested-menu API; it now shows IP rows with a single confirm-guarded "Disconnect All" action.
+- Right-click-to-favorite on device presets now works (was connected through a nonexistent signal API and silently did nothing).
+- The "confirm destructive actions" setting is now honored by Stop Session, Disconnect All, and Emergency Display Reset; the confirm state also reopens the menu so it is visible.
+- Applet status polling actually reads the status file on its 5-second fallback timer instead of only re-arming itself, and no longer spams DBus `Refresh` every tick.
+- DBus status pushes are applied directly instead of being written back to the daemon-owned status file (removed a write race and redundant monitor churn).
+- Copy Direct Address uses `St.Clipboard` instead of requiring `xclip`; Custom Resolution falls back to the TUI when `zenity` is not installed; menu actions notify instead of failing silently when the `res` command is missing.
+- ShellCheck SC2015/SC2034 findings in `lib/core.sh` and `lib/backend_wayland.sh` that failed `make ci`.
 - `make test` now fails when ShellCheck fails instead of reporting lint as skipped.
 - ShellCheck SC2059 warnings in the text-mode TUI menu.
 - Cinnamon applet fallback status path now matches the shell fallback `/tmp/remote-studio-$UID`.

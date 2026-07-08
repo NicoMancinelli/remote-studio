@@ -80,7 +80,7 @@ MyApplet.prototype = {
         this.set_applet_label("Res");
 
         // ── Cinnamon Settings (properly wired) ─────────────────────────────
-        this.settings = new Settings.Binding(metadata.uuid, instance_id);
+        this.settings = new Settings.AppletSettings(this, metadata.uuid, instance_id);
         this.settings.bindProperty(Settings.BindingDirection.IN,
             "default_profile", "defaultProfile", () => {
                 this._buildMenu();
@@ -128,6 +128,7 @@ MyApplet.prototype = {
         this._profileCacheTime = 0;
         this._sessionStart  = null;
         this._activeIPs     = [];
+        this._lastStatus    = null;
         this._confirmItems  = {};  // { itemKey: { timeoutId, callback } }
         this._dbusWatchId   = undefined;
         this._dbusRetryTimeout = null;
@@ -137,7 +138,7 @@ MyApplet.prototype = {
         this._lastUsedProfile = null;
 
         // Instance-level group collapse state (avoid sharing across instances)
-        this._groupOpen = { presets: true, performance: false, rustdesk: false, system: false };
+        this._groupOpen = { active_sessions: true, presets: true, performance: false, rustdesk: false, system: false };
 
         // Load favorites
         this._loadFavorites();
@@ -329,8 +330,10 @@ MyApplet.prototype = {
             }
         }
 
+        // Read immediately, then poll as a fallback for missed events
+        this._readStatus();
         this._timeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
-            this._scheduleUpdate();
+            this._readStatus();
             return GLib.SOURCE_CONTINUE;
         });
 
@@ -436,6 +439,7 @@ MyApplet.prototype = {
     },
 
     _getDirectAddress: function() {
+        if (this._lastStatus) return this._lastStatus.direct;
         try {
             let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
             if (ok) {
@@ -447,6 +451,7 @@ MyApplet.prototype = {
     },
 
     _getActiveIPs: function() {
+        if (this._lastStatus) return this._lastStatus.active_ips || [];
         try {
             let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
             if (ok) {
@@ -574,13 +579,21 @@ MyApplet.prototype = {
         try {
             let [ok, buf] = GLib.file_get_contents(STATUS_FILE);
             if (!ok) return;
-            let status = this._parseStatus(buf.toString());
+            this._applyStatus(buf.toString());
+        } catch(e) {
+            this._setUnavailable("Status read failed");
+        }
+    },
+
+    _applyStatus: function(raw) {
+        try {
+            let status = this._parseStatus(raw);
             if (!status) {
                 this._setUnavailable("Status data is incomplete");
                 return;
             }
 
-            // FIX #1: Store active IPs on the instance (was missing!)
+            this._lastStatus = status;
             this._activeIPs = status.active_ips || [];
 
             let users = status.users;
@@ -648,18 +661,16 @@ MyApplet.prototype = {
                 this._applyLabelColor("");
             }
         } catch(e) {
-            this._setUnavailable("Status read failed");
+            this._setUnavailable("Status update failed");
         }
     },
 
-    // FIX #2: DBus status handler — delegated to _readStatus
+    // DBus status handler — the daemon owns the status file, so apply the
+    // pushed payload directly instead of writing it back to disk
     _readStatusFromDBus: function(statusString) {
         try {
             if (!statusString) return;
-            // Write the DBus status to the status file so _readStatus can parse it
-            GLib.mkdir_with_parents(STATUS_DIR, 0o755);
-            GLib.file_set_contents(STATUS_FILE, statusString);
-            this._readStatus();
+            this._applyStatus(statusString);
         } catch(e) {
             global.logError("Remote Studio: _readStatusFromDBus failed: " + e);
         }
@@ -730,6 +741,12 @@ MyApplet.prototype = {
     // ── Action runner ─────────────────────────────────────────────────────────
 
     _runRes: function(arg) {
+        if (!GLib.file_test(RES_CMD, GLib.FileTest.EXISTS)) {
+            this._setUnavailable("res command not found at " + RES_CMD);
+            Util.spawn(["notify-send", "-u", "critical", "Remote Studio",
+                "res command not found at " + RES_CMD + " — is Remote Studio installed?"]);
+            return;
+        }
         Util.spawn([RES_CMD].concat(arg.split(" ")));
 
         // Track session start/stop and last used profile
@@ -770,6 +787,23 @@ MyApplet.prototype = {
         return null;
     },
 
+    // ── Clipboard ────────────────────────────────────────────────────────
+
+    _copyToClipboard: function(text) {
+        try {
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+        } catch(e) {
+            // Older Cinnamon: set_text without a type argument
+            try {
+                St.Clipboard.get_default().set_text(text);
+            } catch(e2) {
+                Util.spawn(["bash", "-c",
+                    "printf %s \"$1\" | xclip -selection clipboard",
+                    "remote-studio", text]);
+            }
+        }
+    },
+
     // ── Confirmation pattern ─────────────────────────────────────────────
 
     _requestConfirm: function(key, label, callback) {
@@ -792,6 +826,9 @@ MyApplet.prototype = {
             callback: callback
         };
         this._buildMenu();
+        // Activating an item closes the menu; reopen it so the
+        // "tap again to confirm" state is actually visible
+        if (this.menu && !this.menu.isOpen) this.menu.open(false);
     },
 
     _isConfirming: function(key) {
@@ -830,6 +867,10 @@ MyApplet.prototype = {
     },
 
     _subConfirmItem: function(group, label, icon, confirmKey, actionArg, destructiveLabel) {
+        // Respect the "confirm before destructive actions" setting
+        if (this._confirmDestructive === false) {
+            return this._subItem(group, label, icon, actionArg);
+        }
         let isConfirming = this._isConfirming(confirmKey);
         let itemLabel = isConfirming ? (destructiveLabel || "⚠ Confirm?") : label;
         let itemIcon  = isConfirming ? "dialog-warning-symbolic" : icon;
@@ -867,20 +908,15 @@ MyApplet.prototype = {
         if (activeIPs && activeIPs.length > 0) {
             let activeGroup = this._makeGroup("👥  Active Sessions (" + activeIPs.length + ")", "active_sessions");
             activeIPs.forEach(ip => {
-                // Make each IP a clickable item with disconnect submenu
                 let ipItem = new PopupMenu.PopupIconMenuItem(
                     "🔌  " + ip, "network-workgroup-symbolic", St.IconType.SYMBOLIC
                 );
-                // Sub-menu for disconnect actions
-                let disconnectItem = new PopupMenu.PopupIconMenuItem(
-                    "  ⏹  Disconnect All", "media-playback-stop-symbolic", St.IconType.SYMBOLIC
-                );
-                disconnectItem.connect("activate", () => {
-                    this._runRes("session stop");
-                });
-                ipItem.menu.addMenuItem(disconnectItem);
+                ipItem.actor.set_reactive(false);
                 activeGroup.menu.addMenuItem(ipItem);
             });
+            this._subSep(activeGroup);
+            this._subConfirmItem(activeGroup, "⏹  Disconnect All",
+                "media-playback-stop-symbolic", "disconnect_all", "session stop", "⛔  Tap again to disconnect");
             this.menu.addMenuItem(activeGroup);
         }
 
@@ -908,15 +944,13 @@ MyApplet.prototype = {
             item.connect("activate", () => this._runRes(p.key));
 
             // Right-click to toggle favorite
-            try {
-                item.actor.button_release_event.connect((actor, event) => {
-                    if (event.get_button() === 3) { // Right mouse button
-                        this._toggleFavorite(p.key);
-                        return true;
-                    }
-                    return false;
-                });
-            } catch(e) {}
+            item.actor.connect("button-release-event", (actor, event) => {
+                if (event.get_button() === 3) { // Right mouse button
+                    this._toggleFavorite(p.key);
+                    return true;
+                }
+                return false;
+            });
 
             presetsGroup.menu.addMenuItem(item);
         });
@@ -937,7 +971,7 @@ MyApplet.prototype = {
             let uptimeStr = this._formatUptime(uptime);
             let uptimeItem = new PopupMenu.PopupIconMenuItem(
                 "⏱  Session Uptime: " + uptimeStr,
-                "clock-symbolic", St.IconType.SYMBOLIC
+                "alarm-symbolic", St.IconType.SYMBOLIC
             );
             uptimeItem.actor.set_reactive(false);
             perfGroup.menu.addMenuItem(uptimeItem);
@@ -984,11 +1018,7 @@ MyApplet.prototype = {
                 "⎘  Copy Direct Address (" + directAddr + ")",
                 "edit-copy-symbolic", St.IconType.SYMBOLIC
             );
-            copyItem.connect("activate", () => {
-                Util.spawn(["bash", "-c",
-                    "printf %s \"$1\" | xclip -selection clipboard",
-                    "remote-studio", directAddr]);
-            });
+            copyItem.connect("activate", () => this._copyToClipboard(directAddr));
             this.menu.addMenuItem(copyItem);
         }
 
@@ -1014,6 +1044,11 @@ MyApplet.prototype = {
     // ── Custom Resolution Prompt ──────────────────────────────────────────
 
     _promptCustomResolution: function() {
+        if (!GLib.find_program_in_path("zenity")) {
+            // No dialog tool available — fall back to the TUI in a terminal
+            Util.spawn([this._findTerminal(), "-e", RES_CMD]);
+            return;
+        }
         let currentRes = this._getCurrentResolution();
         if (!currentRes) currentRes = "1920x1080";
         Util.spawn(['bash', '-c',
@@ -1058,14 +1093,11 @@ MyApplet.prototype = {
             case "privacy":
                 this._runRes("privacy");
                 break;
-            case "copy":
+            case "copy": {
                 let directAddr = this._getDirectAddress();
-                if (directAddr) {
-                    Util.spawn(["bash", "-c",
-                        "printf %s \"$1\" | xclip -selection clipboard",
-                        "remote-studio", directAddr]);
-                }
+                if (directAddr) this._copyToClipboard(directAddr);
                 break;
+            }
             case "menu":
             default:
                 this._buildMenu();
@@ -1112,7 +1144,10 @@ MyApplet.prototype = {
     },
 
     on_applet_removed_from_panel: function() {
-        if (this._timeout)     GLib.source_remove(this._timeout);
+        if (this._timeout) {
+            GLib.source_remove(this._timeout);
+            this._timeout = null;
+        }
         if (this._dbusWatchId !== undefined) {
             try { Gio.DBus.session.unwatch_name(this._dbusWatchId); } catch(e) {}
         }

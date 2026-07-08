@@ -40,9 +40,11 @@ backend_apply_native_mode() {
 
 backend_apply_custom_mode() {
     local output="$1"
+    # shellcheck disable=SC2034  # mode_name/freq kept for backend API parity with the Xorg backend
     local mode_name="$2"
     local width="$3"
     local height="$4"
+    # shellcheck disable=SC2034
     local freq="${5:-60}"
     # Under Mutter Wayland, arbitrary custom modes via command line are generally unsupported
     # without patching mutter or using specific custom EDIDs.

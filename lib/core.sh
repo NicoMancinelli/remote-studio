@@ -271,13 +271,13 @@ record_recent_profile() {
     # New entry first, then existing entries minus this one, capped at 5 lines
     {
         printf '%s\n' "$key"
-        [ -f "$RECENT_PROFILES_FILE" ] && grep -v "^${key}\$" "$RECENT_PROFILES_FILE" || true
+        if [ -f "$RECENT_PROFILES_FILE" ]; then grep -v "^${key}\$" "$RECENT_PROFILES_FILE" || true; fi
     } | head -n 5 > "$tmp"
     mv "$tmp" "$RECENT_PROFILES_FILE"
 }
 
 get_recent_profiles() {
-    [ -f "$RECENT_PROFILES_FILE" ] && cat "$RECENT_PROFILES_FILE" || true
+    if [ -f "$RECENT_PROFILES_FILE" ]; then cat "$RECENT_PROFILES_FILE"; fi
 }
 
 speed_state() { [ "$(gsettings get org.cinnamon desktop-effects 2>/dev/null)" = "false" ] && echo "ON" || echo "OFF"; }

@@ -17,6 +17,8 @@ test: lint
 ci: test
 	bash -n res.sh install.sh install-remote-studio.sh lib/*.sh package/build-deb.sh
 	node --check applet/applet.js
+	node tests/applet/applet.test.js
+	python3 -c "import json; json.load(open('applet/settings-schema.json')); json.load(open('applet/metadata.json'))"
 	./res.sh status --json >/dev/null
 	./install.sh --dry-run install >/dev/null
 
