@@ -376,11 +376,10 @@ func StartDaemon() error {
 	}
 	l2.Close()
 
-	// Check DBus environment variable
-	dbusAddr, exists := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS")
-	if exists && dbusAddr == "" {
-		return fmt.Errorf("DBus session bus address is missing")
-	}
+	// Check DBus environment variable. An unset OR empty variable is the
+	// same thing for our purposes — DBus is optional in this daemon, so we
+	// only proceed to connect when the user actually pointed us at a bus.
+	dbusAddr := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 
 	var conn *dbus.Conn
 	var props *prop.Properties

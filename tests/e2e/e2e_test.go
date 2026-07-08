@@ -153,9 +153,6 @@ func executeCmd(args []string, extraEnv []string) (string, string, error) {
 	// `cmd/custom.go`. Tests that want to verify headless behavior can pass
 	// `DISPLAY=` (and/or `WAYLAND_DISPLAY=`) in extraEnv to override.
 	filteredEnv = append(filteredEnv, "DISPLAY=:99")
-	if DbusAddress != "" {
-		filteredEnv = append(filteredEnv, "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
-	}
 	filteredEnv = append(filteredEnv, extraEnv...)
 	cmd.Env = filteredEnv
 
@@ -185,9 +182,6 @@ func executeDaemon(args []string, extraEnv []string) (*exec.Cmd, error) {
 	filteredEnv = append(filteredEnv, "XDG_RUNTIME_DIR="+IsolatedXdgRuntime)
 	filteredEnv = append(filteredEnv, "TERM=xterm-256color")
 	filteredEnv = append(filteredEnv, "DISPLAY=:99")
-	if DbusAddress != "" {
-		filteredEnv = append(filteredEnv, "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
-	}
 	filteredEnv = append(filteredEnv, extraEnv...)
 	cmd.Env = filteredEnv
 
