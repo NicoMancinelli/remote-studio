@@ -9,13 +9,20 @@ apply_all() {
     [ -z "$OUTPUT" ] && { echo "Error: no connected display found." >&2; return 1; }
     MODE_NAME=$(mode_name_for "$width" "$height")
 
-    # Remove stale modes with same name or resolution
+    # Remove stale modes with same name or resolution.
+    # Use awk instead of grep -E so $MODE_NAME and $width/$height are matched as
+    # literal substrings (no regex metachar interpretation). The three patterns are:
+    #   - exact MODE_NAME
+    #   - exact "${W}x${H}"
+    #   - prefix "${W}x${H}_" (for refresh-rate suffixes)
     local m current_m
     current_m=$(xrandr | awk '/\*/ {print $1}')
-    for m in $(xrandr | awk '{print $1}' | grep -E "^${MODE_NAME}\$|^${width}x${height}(_.*)?$"); do
+    for m in $(xrandr | awk '{print $1}' | \
+        awk -v exact="$MODE_NAME" -v res="${width}x${height}" \
+            '$1 == exact || ($1 == res) || ($1 ~ "^"res"_")'); do
         # Never delete the mode we are currently using
         [ "$m" = "$current_m" ] && continue
-        
+
         xrandr --delmode "$OUTPUT" "$m" 2>/dev/null || true
         xrandr --rmmode "$m" 2>/dev/null || true
     done
