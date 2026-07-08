@@ -985,9 +985,12 @@ MyApplet.prototype = {
                 "edit-copy-symbolic", St.IconType.SYMBOLIC
             );
             copyItem.connect("activate", () => {
-                Util.spawn(["bash", "-c",
-                    "printf %s \"$1\" | xclip -selection clipboard",
-                    "remote-studio", directAddr]);
+                // Match the codebase's established pattern (see
+                // _promptCustomResolution at line ~1021): Util.spawn with a
+                // single-element shell command via bash -c.
+                Util.spawn(['bash', '-c',
+                    'printf %s "$1" | xclip -selection clipboard',
+                    'remote-studio', directAddr]);
             });
             this.menu.addMenuItem(copyItem);
         }
@@ -1061,9 +1064,9 @@ MyApplet.prototype = {
             case "copy":
                 let directAddr = this._getDirectAddress();
                 if (directAddr) {
-                    Util.spawn(["bash", "-c",
-                        "printf %s \"$1\" | xclip -selection clipboard",
-                        "remote-studio", directAddr]);
+                    Util.spawn(['bash', '-c',
+                        'printf %s "$1" | xclip -selection clipboard',
+                        'remote-studio', directAddr]);
                 }
                 break;
             case "menu":
