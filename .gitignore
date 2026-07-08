@@ -9,3 +9,5 @@ dist/
 \#*\#
 .idea/
 .vscode/
+/remote-studio
+/remote-studio.test

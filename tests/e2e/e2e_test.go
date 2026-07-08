@@ -147,6 +147,12 @@ func executeCmd(args []string, extraEnv []string) (string, string, error) {
 	filteredEnv = append(filteredEnv, "HOME="+IsolatedHome)
 	filteredEnv = append(filteredEnv, "PATH="+MockBinDir+":"+os.Getenv("PATH"))
 	filteredEnv = append(filteredEnv, "XDG_RUNTIME_DIR="+IsolatedXdgRuntime)
+	filteredEnv = append(filteredEnv, "TERM=xterm-256color")
+	// Default DISPLAY to a fake value so tests that don't care about display
+	// presence (and don't unset it) don't hit our headless gate in
+	// `cmd/custom.go`. Tests that want to verify headless behavior can pass
+	// `DISPLAY=` (and/or `WAYLAND_DISPLAY=`) in extraEnv to override.
+	filteredEnv = append(filteredEnv, "DISPLAY=:99")
 	if DbusAddress != "" {
 		filteredEnv = append(filteredEnv, "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
 	}
@@ -177,6 +183,8 @@ func executeDaemon(args []string, extraEnv []string) (*exec.Cmd, error) {
 	filteredEnv = append(filteredEnv, "HOME="+IsolatedHome)
 	filteredEnv = append(filteredEnv, "PATH="+MockBinDir+":"+os.Getenv("PATH"))
 	filteredEnv = append(filteredEnv, "XDG_RUNTIME_DIR="+IsolatedXdgRuntime)
+	filteredEnv = append(filteredEnv, "TERM=xterm-256color")
+	filteredEnv = append(filteredEnv, "DISPLAY=:99")
 	if DbusAddress != "" {
 		filteredEnv = append(filteredEnv, "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
 	}

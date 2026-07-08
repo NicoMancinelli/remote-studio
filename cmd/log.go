@@ -11,15 +11,19 @@ import (
 )
 
 var logCmd = &cobra.Command{
-	Use:   "log [lines]",
-	Short: "Show the last lines of the log",
-	Args:  cobra.MaximumNArgs(1),
+	Use:                "log [lines]",
+	Short:              "Show the last lines of the log",
+	Args:               cobra.MaximumNArgs(1),
+	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		lines := 20
 		if len(args) > 0 {
 			val, err := strconv.Atoi(args[0])
 			if err != nil {
 				return fmt.Errorf("invalid line count: %s", args[0])
+			}
+			if val <= 0 {
+				return fmt.Errorf("invalid line count: must be positive, got %d", val)
 			}
 			lines = val
 		}

@@ -56,6 +56,13 @@ var customCmd = &cobra.Command{
 			scale = s
 		}
 
+		// Headless check (after arg validation, so negative/invalid args still
+		// get their dedicated error messages). We check env vars directly so
+		// a fake xrandr cannot trick this gate in test environments.
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return fmt.Errorf("no display server detected (DISPLAY and WAYLAND_DISPLAY are both unset)")
+		}
+
 		textScale := 1.0
 		if scale > 1.0 {
 			textScale = 1.5
