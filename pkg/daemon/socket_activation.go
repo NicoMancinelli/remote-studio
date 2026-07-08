@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"syscall"
 )
 
 // listenFDsStart is the starting file descriptor number for socket activation.
@@ -54,19 +55,37 @@ func GetListeners() (wsListener, httpListener net.Listener, socketActivated bool
 		return wsListener, httpListener, true, nil
 	}
 
-	// Not socket-activated — bind ports directly (existing behavior).
-	wsListener, err = net.Listen("tcp", "0.0.0.0:9998")
+	// Not socket-activated — bind ports directly with SO_REUSEADDR so the
+	// daemon can recover from TIME_WAIT after a previous instance was killed
+	// (matters for the e2e suite, which kills and restarts daemons in quick
+	// succession on ports 9998/9999).
+	wsListener, err = listenReuseAddr("tcp", "0.0.0.0:9998")
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("port conflict: failed to bind 0.0.0.0:9998: %w", err)
 	}
 
-	httpListener, err = net.Listen("tcp", "0.0.0.0:9999")
+	httpListener, err = listenReuseAddr("tcp", "0.0.0.0:9999")
 	if err != nil {
 		wsListener.Close()
 		return nil, nil, false, fmt.Errorf("port conflict: failed to bind 0.0.0.0:9999: %w", err)
 	}
 
 	return wsListener, httpListener, false, nil
+}
+
+// listenReuseAddr binds a TCP listener with SO_REUSEADDR enabled. Plain
+// net.Listen does not set the socket option, so a recently-killed listener
+// in TIME_WAIT would block the bind. SO_REUSEADDR lets us reclaim the port
+// immediately.
+func listenReuseAddr(network, address string) (net.Listener, error) {
+	cfg := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			})
+		},
+	}
+	return cfg.Listen(nil, network, address)
 }
 
 // getListenFDs implements the sd_listen_fds(3) protocol:

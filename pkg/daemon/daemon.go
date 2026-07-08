@@ -3,7 +3,6 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -363,22 +362,17 @@ func (d *Daemon) pollNetwork() {
 }
 
 func StartDaemon() error {
-	// First check port conflicts on 9998 and 9999
-	l1, err1 := net.Listen("tcp", "127.0.0.1:9998")
-	if err1 != nil {
-		return fmt.Errorf("port conflict: 9998 is already in use")
+	// Bind listeners first so port conflicts fail fast (before DBus setup).
+	// GetListeners() tries systemd socket activation first, then falls back
+	// to direct bind with SO_REUSEADDR so a recently-killed daemon's port
+	// can be reclaimed without TIME_WAIT blocking.
+	wsListener, httpListener, _, err := GetListeners()
+	if err != nil {
+		return err
 	}
-	l1.Close()
 
-	l2, err2 := net.Listen("tcp", "127.0.0.1:9999")
-	if err2 != nil {
-		return fmt.Errorf("port conflict: 9999 is already in use")
-	}
-	l2.Close()
-
-	// Check DBus environment variable. An unset OR empty variable is the
-	// same thing for our purposes — DBus is optional in this daemon, so we
-	// only proceed to connect when the user actually pointed us at a bus.
+	// DBus is optional. An unset OR empty DBUS_SESSION_BUS_ADDRESS skips
+	// DBus setup entirely so the daemon can run on minimal/CI environments.
 	dbusAddr := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 
 	var conn *dbus.Conn
@@ -536,7 +530,7 @@ func StartDaemon() error {
 	})
 
 	go func() {
-		_ = http.ListenAndServe("0.0.0.0:9998", nil)
+		_ = http.Serve(wsListener, nil)
 	}()
 
 	// HTTP Server for dashboard
@@ -552,7 +546,7 @@ func StartDaemon() error {
 	httpMux.Handle("/", http.FileServer(http.Dir(webDist)))
 
 	go func() {
-		_ = http.ListenAndServe("0.0.0.0:9999", httpMux)
+		_ = http.Serve(httpListener, httpMux)
 	}()
 
 	select {}
