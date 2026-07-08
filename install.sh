@@ -45,7 +45,10 @@ backup_configs() {
     backup_dir="$HOME/.config/remote-studio/backups/$stamp"
     run mkdir -p "$backup_dir"
 
-    [ -f "$HOME/.xsessionrc" ] && run cp -P "$HOME/.xsessionrc" "$backup_dir/xsessionrc"
+    # Use `cp -L` to dereference any symlinks before backing up.
+    # Without -L, `cp -P` preserves the link itself; if the user later moves
+    # the source target, the backup becomes a dangling link.
+    [ -f "$HOME/.xsessionrc" ] && run cp -L "$HOME/.xsessionrc" "$backup_dir/xsessionrc"
     [ -f "$RUSTDESK_DIR/RustDesk_default.toml" ] && run cp "$RUSTDESK_DIR/RustDesk_default.toml" "$backup_dir/RustDesk_default.toml"
     [ -f "$RUSTDESK_DIR/RustDesk2.toml" ] && run cp "$RUSTDESK_DIR/RustDesk2.toml" "$backup_dir/RustDesk2.toml"
     if [ -f /etc/X11/xorg.conf ]; then
@@ -73,7 +76,7 @@ rollback_configs() {
     latest=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d | sort -r | head -n 1)
     [ -z "$latest" ] && { echo "Error: No backups found in $backup_root"; exit 1; }
     echo "Rolling back from: $latest"
-    [ -f "$latest/xsessionrc" ] && run cp -P "$latest/xsessionrc" "$HOME/.xsessionrc" && echo "  Restored .xsessionrc"
+    [ -f "$latest/xsessionrc" ] && run cp -L "$latest/xsessionrc" "$HOME/.xsessionrc" && echo "  Restored .xsessionrc"
     [ -f "$latest/RustDesk_default.toml" ] && run cp "$latest/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml" && echo "  Restored RustDesk_default.toml"
     [ -f "$latest/xorg.conf" ] && run sudo cp "$latest/xorg.conf" /etc/X11/xorg.conf && echo "  Restored /etc/X11/xorg.conf"
     echo "Rollback complete. Restart LightDM or reboot if xorg.conf was changed."
