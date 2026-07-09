@@ -40,9 +40,11 @@ backend_apply_native_mode() {
 
 backend_apply_custom_mode() {
     local output="$1"
+    # shellcheck disable=SC2034 # mode_name/freq are required for the cross-backend dispatcher signature (see lib/backend_x11.sh).
     local mode_name="$2"
     local width="$3"
     local height="$4"
+    # shellcheck disable=SC2034 # freq is required for the cross-backend dispatcher signature (see lib/backend_x11.sh).
     local freq="${5:-60}"
     # Under Mutter Wayland, arbitrary custom modes via command line are generally unsupported
     # without patching mutter or using specific custom EDIDs.

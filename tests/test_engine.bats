@@ -51,7 +51,13 @@ setup() {
 
 @test "res xorg uses 'modesetting' driver when lspci finds no known GPU" {
     # In a headless Mac CI there is no lspci output matching nvidia/amd/intel,
-    # so generate_xorg should fall back to modesetting.
+    # so generate_xorg should fall back to modesetting. Skip on hosts that DO
+    # detect a known GPU driver — the modesetting fallback does not apply there.
+    if command -v lspci >/dev/null 2>&1 && lspci 2>/dev/null | grep -qi 'vga\|3d\|display'; then
+        if lspci 2>/dev/null | grep -i 'vga\|3d\|display' | grep -qi 'nvidia\|amd\|intel'; then
+            skip "host has a known GPU; modesetting fallback is not exercised here"
+        fi
+    fi
     run bash "$SCRIPT" xorg
     [ "$status" -eq 0 ]
     [[ "$output" == *'Driver "modesetting"'* ]]
