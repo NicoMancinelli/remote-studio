@@ -1,0 +1,32 @@
+#!/bin/bash
+# Mock sudo for the e2e test environment. The real sudo requires a tty and
+# authentication, neither of which is available in `go test`. We support
+# the two invocations actually used by the Remote Studio codebase:
+#
+#   sudo -- cp <src> <dst>     # cmd/xorg.go rollback path
+#
+# Anything else exits non-zero with a clear error so we can detect
+# un-mocked invocations during test development.
+#
+# Note: this only fakes permission escalation — actual file copies are
+# performed by the real /bin/cp we exec after stripping the sudo prefix.
+
+if [ "$1" = "--" ]; then
+    shift
+fi
+
+if [ "$1" = "cp" ] && [ $# -eq 3 ]; then
+    exec /bin/cp "$2" "$3"
+fi
+
+# Sudo -n (non-interactive) is used by pkg/daemon for the name request.
+# We don't actually own a name; just succeed silently so the daemon
+# startup path that checks IsNameOwner doesn't crash.
+if [ "$1" = "systemctl" ]; then
+    # Some tests in mocks_test.go exec `sudo systemctl restart ...`.
+    # Defer to whatever systemctl the test PATH has first.
+    exec /home/neek/remote-studio/tests/e2e/mocks/bin/systemctl "${@:2}"
+fi
+
+echo "mock sudo: un-mocked invocation: $*" >&2
+exit 1

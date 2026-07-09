@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"remote-studio/pkg/session"
 	"github.com/spf13/cobra"
@@ -36,18 +37,29 @@ var xorgCmd = &cobra.Command{
 				return fmt.Errorf("Error: No backup directory found at %s", backupRoot)
 			}
 
-			// Sort in reverse order
-			var dirs []string
+			// Sort in reverse order — prefer the most recently modified
+			// backup directory (matches user intent when they run
+			// `xorg rollback` expecting the most recent config). Plain
+			// alphabetical sort breaks this: a folder named
+			// `backup-1` (older) sorts after `2026-06-18_08-30-00` in
+			// reverse-ascending order, picking the wrong file.
+			type backupEntry struct {
+				name    string
+				modTime time.Time
+			}
+			entries := make([]backupEntry, 0, len(files))
 			for _, f := range files {
 				if f.IsDir() {
-					dirs = append(dirs, f.Name())
+					entries = append(entries, backupEntry{name: f.Name(), modTime: f.ModTime()})
 				}
 			}
-			sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+			sort.Slice(entries, func(i, j int) bool {
+				return entries[i].modTime.After(entries[j].modTime)
+			})
 
 			latestBackup := ""
-			for _, d := range dirs {
-				p := filepath.Join(backupRoot, d, "xorg.conf")
+			for _, e := range entries {
+				p := filepath.Join(backupRoot, e.name, "xorg.conf")
 				if _, err := os.Stat(p); err == nil {
 					latestBackup = p
 					break
@@ -58,10 +70,26 @@ var xorgCmd = &cobra.Command{
 				return fmt.Errorf("Error: No xorg.conf found in the latest backup")
 			}
 
-			fmt.Printf("Restoring /etc/X11/xorg.conf from %s...\n", latestBackup)
-			cpCmd := exec.Command("sudo", "cp", latestBackup, "/etc/X11/xorg.conf")
+			fmt.Printf("Restoring %s from %s...\n", restoreTarget(), latestBackup)
+			// Use sudo only when needed. If we're already root (uid 0),
+			// copy directly. Otherwise, fall back to sudo cp — and if
+			// sudo isn't available (CI/containers), surface a clear error
+			// rather than a generic "exit status 1".
+			target := restoreTarget()
+			cpArgs := []string{"cp", latestBackup, target}
+			var cpCmd *exec.Cmd
+			if os.Geteuid() == 0 {
+				cpCmd = exec.Command("cp", cpArgs...)
+			} else if _, err := exec.LookPath("sudo"); err == nil {
+				cpCmd = exec.Command("sudo", append([]string{"--"}, "cp", latestBackup, target)...)
+			} else {
+				// No sudo, no root — try cp directly. This handles the
+				// e2e test environment (no sudo) and any user who runs the
+				// binary without privileges but with a writable target.
+				cpCmd = exec.Command("cp", cpArgs...)
+			}
 			if err := cpCmd.Run(); err != nil {
-				return fmt.Errorf("failed to restore backup: %w", err)
+				return fmt.Errorf("failed to restore backup to %s: %w", target, err)
 			}
 			fmt.Println("Rollback complete. Restart LightDM or reboot to apply.")
 			return nil
@@ -198,4 +226,16 @@ func pruneBackups() {
 			_ = os.RemoveAll(filepath.Join(backupRoot, dirs[i]))
 		}
 	}
+}
+
+// restoreTarget returns the file path that \`xorg rollback\` will write to.
+// In production this is /etc/X11/xorg.conf, but the e2e harness sets
+// RES_XORG_RESTORE_TARGET to a tmpdir so the test can verify a successful
+// rollback without requiring root access. Falls back to the production
+// path when the env var is unset.
+func restoreTarget() string {
+	if t := os.Getenv("RES_XORG_RESTORE_TARGET"); t != "" {
+		return t
+	}
+	return "/etc/X11/xorg.conf"
 }
