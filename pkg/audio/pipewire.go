@@ -165,17 +165,30 @@ func findModuleID() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to list modules: %w", err)
 	}
+	return parseModuleID(string(out), moduleNullSink, VirtualSinkName), nil
+}
 
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, moduleNullSink) && strings.Contains(line, VirtualSinkName) {
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				return fields[0], nil
-			}
+// parseModuleID is the pure parser extracted from findModuleID. It
+// scans `pactl list short modules` output for a line containing both
+// the module name (e.g. "module-null-sink") and the sink name (e.g.
+// "RemoteStudio-Virtual"). Returns the module ID (first whitespace-
+// separated field of the matching line) or "" if not found.
+//
+// Example line: "16  module-null-sink  args: sink_name=RemoteStudio-Virtual"
+func parseModuleID(pactlOut, moduleName, sinkName string) string {
+	for _, line := range strings.Split(pactlOut, "\n") {
+		if !strings.Contains(line, moduleName) {
+			continue
+		}
+		if sinkName != "" && !strings.Contains(line, sinkName) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) > 0 {
+			return fields[0]
 		}
 	}
-
-	return "", nil
+	return ""
 }
 
 // listPhysicalSinks returns the names of all loaded sinks that are NOT
@@ -186,19 +199,31 @@ func listPhysicalSinks() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sinks: %w", err)
 	}
+	return parseSinkList(string(out), VirtualSinkName), nil
+}
 
+// parseSinkList is the pure parser extracted from listPhysicalSinks.
+// It scans `pactl list short sinks` output and returns the names of
+// all sinks that are NOT the excluded virtual sink.
+//
+// Each line of pactl output has at least 2 fields:
+//
+//	<index> <name> [<module_id>] [<state>] ...
+//
+// We treat field[1] as the name. Lines that don't parse (fewer than
+// 2 fields) are skipped.
+func parseSinkList(pactlOut, excludeSink string) []string {
 	var sinks []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(pactlOut, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
 		}
 		name := fields[1]
-		if name == VirtualSinkName {
+		if name == excludeSink {
 			continue
 		}
 		sinks = append(sinks, name)
 	}
-
-	return sinks, nil
+	return sinks
 }

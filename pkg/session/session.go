@@ -23,16 +23,30 @@ func getConnectedDisplay() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no connected display found (xrandr failed: %w, stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
-	lines := strings.Split(stdout.String(), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, " connected") {
-			parts := strings.Fields(line)
-			if len(parts) > 0 {
-				return parts[0], nil
-			}
-		}
+	if name := firstConnectedOutput(stdout.String()); name != "" {
+		return name, nil
 	}
 	return "", fmt.Errorf("no connected display found")
+}
+
+// firstConnectedOutput returns the name of the first connected display
+// in xrandr output, or "" if none. The format is one line per output:
+//
+//	HDMI-1 connected primary 2560x1664+0+0 (normal left inverted right x axis y axis) 553mm x 344mm
+//
+// The output name is the first whitespace-separated field of any line
+// containing " connected".
+func firstConnectedOutput(xrandrOut string) string {
+	for _, line := range strings.Split(xrandrOut, "\n") {
+		if !strings.Contains(line, " connected") {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+	return ""
 }
 
 func ApplyAll(width, height int, scaling, textScale float64, cursor int, label string) error {
@@ -265,17 +279,7 @@ func SessionStop() error {
 				stateFile := filepath.Join(home, ".res_state")
 				_ = os.WriteFile(stateFile, []byte(stateStr+"\n"), 0644)
 
-				// Parse state fields
-				// width height scaling text_scale cursor 'label'
-				re := regexp.MustCompile(`^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+'([^']+)'`)
-				matches := re.FindStringSubmatch(stateStr)
-				if len(matches) == 7 {
-					w, _ := strconv.Atoi(matches[1])
-					h, _ := strconv.Atoi(matches[2])
-					s, _ := strconv.ParseFloat(matches[3], 64)
-					ts, _ := strconv.ParseFloat(matches[4], 64)
-					c, _ := strconv.Atoi(matches[5])
-					label := matches[6]
+				if w, h, s, ts, c, label, ok := parseStateLine(stateStr); ok {
 					_ = ApplyAll(w, h, s, ts, c, label)
 				}
 			}
@@ -296,4 +300,30 @@ func SessionStop() error {
 
 	LogEvent("Session stop")
 	return nil
+}
+
+// parseStateLine parses a state-file line in the form
+//
+//	"<width> <height> <scaling> <text_scale> <cursor> '<label>'"
+//
+// Returns the parsed fields plus an `ok` boolean. The label can contain
+// spaces and is delimited by single quotes; everything else is
+// whitespace-separated and the leading fields are always numeric.
+func parseStateLine(line string) (width, height int, scaling, textScale float64, cursor int, label string, ok bool) {
+	// Match "<w> <h> <s> <ts> <c> 'label'". The label is the only
+	// quoted field and may contain spaces.
+	re := regexp.MustCompile(`^(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+'([^']*)'`)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) != 7 {
+		return 0, 0, 0, 0, 0, "", false
+	}
+	w, err1 := strconv.Atoi(matches[1])
+	h, err2 := strconv.Atoi(matches[2])
+	s, err3 := strconv.ParseFloat(matches[3], 64)
+	ts, err4 := strconv.ParseFloat(matches[4], 64)
+	c, err5 := strconv.Atoi(matches[5])
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
+		return 0, 0, 0, 0, 0, "", false
+	}
+	return w, h, s, ts, c, matches[6], true
 }
