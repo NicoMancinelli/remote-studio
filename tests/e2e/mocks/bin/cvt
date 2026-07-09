@@ -1,6 +1,9 @@
 #!/bin/bash
 WIDTH="${1:-2560}"
 HEIGHT="${2:-1664}"
+# REFRESH is accepted as the 3rd positional arg to mirror real `cvt`'s signature,
+# but this mock emits a fixed 60.00 Hz modeline that the test fixtures expect.
+# shellcheck disable=SC2034
 REFRESH="${3:-60}"
 
 # Outputs CVT modeline format matching what grep / cut expects in the daemon/lib scripts

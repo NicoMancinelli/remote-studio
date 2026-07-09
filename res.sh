@@ -63,9 +63,18 @@ load_startup_config() {
             DEFAULT_PROFILE) DEFAULT_PROFILE=$value ;;
             DEFAULT_SESSION_PROFILE) DEFAULT_SESSION_PROFILE=$value ;;
             DEFAULT_RUSTDESK_PRESET) DEFAULT_RUSTDESK_PRESET=$value ;;
-            AUTO_SESSION) AUTO_SESSION=$value ;;
+            # AUTO_SESSION is consumed only by the Go/Python daemons
+            # (os.Getenv in cmd/watch.go and pkg/daemon/daemon.go; os.environ.get
+            # in daemon/remote_studio_daemon.py). Exported below after the loop
+            # so subprocesses actually inherit it from res.sh's environment.
+            # Recognised here so it isn't dropped as an unknown key.
+            AUTO_SESSION) _auto_session=$value ;;
         esac
     done < "$file"
+    # shellcheck disable=SC2034 # exported for Go/Python daemons; see comment above.
+    if [ -n "${_auto_session:-}" ]; then
+        export AUTO_SESSION=$_auto_session
+    fi
 }
 load_startup_config "$USER_CONFIG"
 DEFAULT_PROFILE="${DEFAULT_PROFILE:-mac}"
