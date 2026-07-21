@@ -130,7 +130,12 @@ func (d *Daemon) updateStatus() {
 	lanIP := getLanIP()
 	combinedIP := lanIP
 	rustdeskDirect := lanIP + ":21118"
-	if tailscaleIP != "" {
+	// LAN mode: when active, treat Tailscale as informational only and
+	// always surface the LAN address as the primary endpoint. The "IP"
+	// field stays single-valued so external tools that parse it (like the
+	// RustDesk direct-address widget) don't get confused by a "/"-joined
+	// dual-IP string.
+	if tailscaleIP != "" && !config.LANModeActive() {
 		combinedIP = tailscaleIP + "/" + lanIP
 		rustdeskDirect = tailscaleIP + ":21118"
 	}

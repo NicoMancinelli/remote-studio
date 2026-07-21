@@ -193,6 +193,11 @@ func checkRustdesk() CheckResult {
 func checkTailscale() CheckResult {
 	_, err := exec.LookPath("tailscale")
 	if err != nil {
+		// LAN mode: tailscale is genuinely optional. Show INFO, not MISS,
+		// so the user doesn't think the install is broken.
+		if config.LANModeActive() {
+			return CheckResult{Name: "tailscale", Status: "INFO", Message: "not installed (LAN mode active — skipping)"}
+		}
 		return CheckResult{Name: "tailscale", Status: "MISS", Message: "not installed (curl -fsSL https://tailscale.com/install.sh | sh)"}
 	}
 	cmdIP := exec.Command("tailscale", "ip", "-4")
@@ -212,6 +217,10 @@ func checkTailscale() CheckResult {
 
 	if tip != "" {
 		return CheckResult{Name: "tailscale", Status: "OK", Message: fmt.Sprintf("%s (%s)", tip, tsBackend)}
+	}
+	// LAN mode: a missing tailnet IP is expected, not a warning.
+	if config.LANModeActive() {
+		return CheckResult{Name: "tailscale", Status: "INFO", Message: "no tailnet IP (LAN mode active — skipping)"}
 	}
 	return CheckResult{Name: "tailscale", Status: "WARN", Message: fmt.Sprintf("no tailnet IP — state: %s (tailscale up?)", tsBackend)}
 }

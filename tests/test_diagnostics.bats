@@ -213,3 +213,99 @@ setup() {
     local count="${output%%|*}"
     [[ "$count" =~ ^[0-9]+$ ]]
 }
+
+# ===========================================================================
+# lan_mode_active — opt-in for LAN-only operation
+# ===========================================================================
+
+@test "lan_mode_active returns 1 (off) by default" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        lan_mode_active
+    "
+    [ "$status" -eq 1 ]
+}
+
+@test "lan_mode_active returns 0 when RES_LAN_MODE=1" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=1
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        lan_mode_active
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "lan_mode_active returns 0 when RES_LAN_MODE=true" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=true
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        lan_mode_active
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "lan_mode_active returns 1 when RES_LAN_MODE=false even with TOML enabled" {
+    # Write a TOML that says enabled.
+    mkdir -p "$BATS_TEST_TMPDIR/.config/remote-studio"
+    cat > "$BATS_TEST_TMPDIR/.config/remote-studio/remote-studio.toml" <<'TOML'
+[lan]
+enabled = true
+TOML
+    # Put the Go binary on PATH so res is callable from bash.
+    export PATH="$ROOT_DIR:$PATH"
+    # Rebuild the Go binary so it's up to date.
+    export PATH_BAK="$PATH"
+    export PATH=/opt/go/bin:$PATH
+    go build -o "$BATS_TEST_TMPDIR/res-go" . 2>/dev/null
+    export PATH="$BATS_TEST_TMPDIR:$PATH_BAK"
+    mv "$BATS_TEST_TMPDIR/res-go" "$BATS_TEST_TMPDIR/res"
+
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=false
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        lan_mode_active
+    "
+    [ "$status" -eq 1 ]
+}
+
+# ===========================================================================
+# get_warning_summary — LAN mode suppresses tailscale warnings
+# ===========================================================================
+
+@test "get_warning_summary excludes tailscale warning when LAN mode is on (env)" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=1
+        ROOT_DIR='$ROOT_DIR'
+        LIB_DIR='$ROOT_DIR/lib'
+        LOG_FILE='$HOME/.remote_studio.log'
+        STATE_FILE='$HOME/.res_state'
+        DEFAULT_PROFILES='$ROOT_DIR/config/profiles.conf'
+        USER_PROFILES='$HOME/.config/remote-studio/profiles.conf'
+        USER_CONFIG='$HOME/.config/remote-studio/remote-studio.conf'
+        RECENT_PROFILES_FILE='$HOME/.config/remote-studio/recent_profiles'
+        STATUS_DIR='/tmp/remote-studio-test-\$\$'
+        STATUS_FILE='\$STATUS_DIR/status'
+        SESSION_FILE='$HOME/.config/remote-studio/session.state'
+        WALLPAPER_BACKUP='$HOME/.wallpaper_backup'
+        _WARN_CACHE=''
+        _WARN_CACHE_TS=0
+        declare -A PROFILES=()
+        source '$HELPERS/mock_commands.bash'
+        source '$ROOT_DIR/lib/backend_x11.sh'
+        source '$ROOT_DIR/lib/core.sh'
+        source '$ROOT_DIR/lib/diagnostics.sh'
+        get_warning_summary
+    "
+    [ "$status" -eq 0 ]
+    # The tailscale warning token must NOT appear in the message list.
+    [[ "$output" != *"tailscale"* ]] || [[ "$output" == *"0|"* ]]
+}

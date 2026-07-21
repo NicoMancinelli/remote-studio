@@ -80,8 +80,12 @@ show_init_wizard() {
 
     # Step 2: tailscale
     if ! command -v tailscale >/dev/null 2>&1; then
-        whiptail --yesno "Tailscale is not installed.\n\nInstall it now? (runs the official installer)" 10 60 && \
-            sh -c "curl -fsSL https://tailscale.com/install.sh | sh"
+        if lan_mode_active; then
+            whiptail --msgbox "Tailscale is not installed, but LAN mode is active — skipping. You can run this machine over a local network without a tailnet." 10 65
+        else
+            whiptail --yesno "Tailscale is not installed.\n\nInstall it now? (runs the official installer)" 10 60 && \
+                sh -c "curl -fsSL https://tailscale.com/install.sh | sh"
+        fi
     fi
 
     # Step 3: rustdesk
@@ -131,6 +135,8 @@ show_help() {
     echo "  update                   Pull latest code and re-run install"
     echo "  profiles                 List all profiles and sources"
     echo "  config [show|get K|set K V]"
+    echo "  config [get-toml K|set-toml K V|show-toml|validate-toml|init-toml]"
+    echo "                           TOML config (display.xorg_driver, lan.*, etc.)"
     echo "  status [--json]          Print applet status (JSON for automation)"
     echo "  version, help"
 }

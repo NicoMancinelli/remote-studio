@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"remote-studio/pkg/config"
 )
 
 type SessionStatus struct {
@@ -232,16 +234,23 @@ func GetWarningSummary() (int, string) {
 		}
 	}
 
-	if tailscaleState != "active" || tsIP == "" {
-		warnings = append(warnings, "tailscale")
-	}
+	// LAN mode: when active, Tailscale is treated as optional. Missing
+	// tailnet IP, daemon down, or any backend-state anomaly are all
+	// expected and not actionable, so we suppress them from the warning
+	// list. The user explicitly opted in to LAN-only operation.
+	lanMode := config.LANModeActive()
+	if !lanMode {
+		if tailscaleState != "active" || tsIP == "" {
+			warnings = append(warnings, "tailscale")
+		}
 
-	if tailscaleState == "active" {
-		switch tsBackendState {
-		case "NeedsLogin", "Stopped":
-			warnings = append(warnings, fmt.Sprintf("tailscale-%s", strings.ToLower(tsBackendState)))
-		case "NoState", "Starting", "NoNetwork":
-			warnings = append(warnings, "tailscale-offline")
+		if tailscaleState == "active" {
+			switch tsBackendState {
+			case "NeedsLogin", "Stopped":
+				warnings = append(warnings, fmt.Sprintf("tailscale-%s", strings.ToLower(tsBackendState)))
+			case "NoState", "Starting", "NoNetwork":
+				warnings = append(warnings, "tailscale-offline")
+			}
 		}
 	}
 

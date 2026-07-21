@@ -27,6 +27,35 @@ mode_name_for() {
     echo "remote-studio-${1}x${2}-60"
 }
 
+# lan_mode_active — returns 0 (success) when LAN-only operation is enabled,
+# 1 otherwise. Precedence:
+#   1. RES_LAN_MODE env var (1/true/yes/on → active; 0/false/no/off → off;
+#      anything else unset → fall through).
+#   2. [lan] enabled in ~/.config/remote-studio/remote-studio.toml (via
+#      `res config get-toml lan_enabled`).
+#   3. false (default — Tailscale warnings stay active).
+#
+# The mirror of this in Go lives in pkg/config/toml.go::LANModeActive.
+# Both implementations MUST stay in sync; the Go binary is the source of
+# truth for parsing the TOML file.
+lan_mode_active() {
+    local v
+    v="${RES_LAN_MODE:-}"
+    case "$v" in
+        1|true|yes|on)  return 0 ;;
+        0|false|no|off) return 1 ;;
+    esac
+    if command -v res >/dev/null 2>&1; then
+        local toml_v
+        toml_v=$(res config get-toml lan_enabled 2>/dev/null || true)
+        case "$toml_v" in
+            true)  return 0 ;;
+            false) return 1 ;;
+        esac
+    fi
+    return 1
+}
+
 get_tailnet_ip() {
     if command -v tailscale >/dev/null 2>&1; then
         tailscale ip -4 2>/dev/null | head -n 1
@@ -142,7 +171,12 @@ get_warning_summary() {
 
     if [[ "$renderer" == *llvmpipe* ]]; then warnings=$((warnings + 1)); messages+=("software-rendering"); fi
     if [ "$rustdesk_state" != "active" ]; then warnings=$((warnings + 1)); messages+=("rustdesk-${rustdesk_state:-unknown}"); fi
-    if [ "$tailscale_state" != "active" ] || [ -z "$ts_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
+    # LAN mode: Tailscale is treated as optional. Skip the
+    # "is tailscale up?" and "what's the backend state?" warnings; users
+    # in LAN mode don't have (or don't want) a tailnet.
+    if ! lan_mode_active; then
+        if [ "$tailscale_state" != "active" ] || [ -z "$ts_ip" ]; then warnings=$((warnings + 1)); messages+=("tailscale"); fi
+    fi
     if [ -z "$current" ]; then warnings=$((warnings + 1)); messages+=("display"); fi
 
     applet_dir="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
@@ -156,8 +190,9 @@ get_warning_summary() {
         warnings=$((warnings + 1)); messages+=("applet-symlink")
     fi
 
-    # Auth / connectivity states (only when daemon is active, to avoid double-counting)
-    if [ "$tailscale_state" = "active" ]; then
+    # Auth / connectivity states (only when daemon is active AND we're not
+    # in LAN mode — LAN mode suppresses all tailscale-related warnings).
+    if [ "$tailscale_state" = "active" ] && ! lan_mode_active; then
         case "$ts_state" in
             NeedsLogin|Stopped)
                 warnings=$((warnings + 1)); messages+=("tailscale-${ts_state,,}") ;;

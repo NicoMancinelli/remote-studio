@@ -39,13 +39,21 @@ show_doctor() {
         fi
     fi
     if ! command -v tailscale >/dev/null 2>&1; then
-        doctor_check "tailscale" "MISS" "not installed (curl -fsSL https://tailscale.com/install.sh | sh)"
+        # LAN mode: tailscale is genuinely optional here. Show INFO, not MISS.
+        if lan_mode_active; then
+            doctor_check "tailscale" "INFO" "not installed (LAN mode active — skipping)"
+        else
+            doctor_check "tailscale" "MISS" "not installed (curl -fsSL https://tailscale.com/install.sh | sh)"
+        fi
     else
         tip=$(get_tailnet_ip)
         local ts_backend
         ts_backend=$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || true)
         if [ -n "$tip" ]; then
             doctor_check "tailscale" "OK" "$tip (${ts_backend:-unknown})"
+        elif lan_mode_active; then
+            # LAN mode: no tailnet IP is expected, not a warning.
+            doctor_check "tailscale" "INFO" "no tailnet IP (LAN mode active — skipping)"
         else
             doctor_check "tailscale" "WARN" "no tailnet IP — state: ${ts_backend:-unknown} (tailscale up?)"
         fi

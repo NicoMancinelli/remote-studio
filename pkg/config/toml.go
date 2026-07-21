@@ -18,6 +18,7 @@ type TOMLConfig struct {
 	Daemon   DaemonConfig   `toml:"daemon"`
 	Audio    AudioConfig    `toml:"audio"`
 	Security SecurityConfig `toml:"security"`
+	LAN      LANConfig      `toml:"lan"`
 	Profiles []ProfileTOML  `toml:"profiles"`
 }
 
@@ -42,6 +43,23 @@ type DisplayConfig struct {
 	//   "dummy"        – headless / CI use case
 	//   "" (empty)     – auto-detect from lspci (default)
 	XorgDriver string `toml:"xorg_driver"`
+}
+
+// LANConfig holds pure-local-network operation settings. When LAN mode is
+// enabled, res treats Tailscale as optional — missing tailnet IP is no
+// longer reported as a warning, and the daemon surfaces the LAN address as
+// its primary endpoint. This is useful when the box sits behind a
+// conventional LAN/router rather than a Tailscale tailnet.
+type LANConfig struct {
+	// Enabled switches res to LAN-only operation. When true, Tailscale
+	// warnings are suppressed and the LAN IP is preferred over the
+	// tailnet IP in all status output.
+	Enabled bool `toml:"enabled"`
+	// BindAddress overrides the bind address used by the daemon / applet
+	// when LAN mode is active. Defaults to 0.0.0.0 (all interfaces).
+	// Common overrides: 192.168.1.10 (specific LAN IP) or 0.0.0.0
+	// (any).
+	BindAddress string `toml:"bind_address"`
 }
 
 // DaemonConfig holds daemon/polling settings.
@@ -155,6 +173,47 @@ func ResolveUserTOMLConfigPath() string {
 
 // ---------- Load ----------
 
+// LANModeActive returns true if res should run in LAN-only mode.
+// Precedence (highest first):
+//   1. RES_LAN_MODE=1 in the environment — explicit override, wins over
+//      everything. Useful for one-off scripts and CI.
+//   2. [lan] enabled = true in the TOML config — persistent per-host setting.
+//   3. false (default).
+func LANModeActive() bool {
+	if v := strings.TrimSpace(os.Getenv("RES_LAN_MODE")); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			return b
+		}
+	}
+	// Only consult the TOML file if it exists. Avoids spamming
+	// "file not found" notes when the user has never run init-toml.
+	path := ResolveTOMLConfigPath()
+	if _, err := os.Stat(path); err == nil {
+		cfg, err := LoadTOMLConfig(path)
+		if err == nil {
+			return cfg.LAN.Enabled
+		}
+	}
+	return false
+}
+
+// LANBindAddress returns the bind address to use when LAN mode is active.
+// Precedence: env RES_LAN_BIND > TOML [lan].bind_address > "0.0.0.0".
+func LANBindAddress() string {
+	if v := strings.TrimSpace(os.Getenv("RES_LAN_BIND")); v != "" {
+		return v
+	}
+	path := ResolveTOMLConfigPath()
+	if _, err := os.Stat(path); err == nil {
+		cfg, err := LoadTOMLConfig(path)
+		if err == nil && cfg.LAN.BindAddress != "" {
+			return cfg.LAN.BindAddress
+		}
+	}
+	return "0.0.0.0"
+}
+
 // LoadTOMLConfig reads a TOML file and populates a TOMLConfig struct.
 func LoadTOMLConfig(path string) (*TOMLConfig, error) {
 	file, err := os.Open(path)
@@ -225,6 +284,8 @@ func LoadTOMLConfig(path string) (*TOMLConfig, error) {
 			applyGeneralField(&cfg.General, key, val)
 		case "display":
 			applyDisplayField(&cfg.Display, key, val)
+		case "lan":
+			applyLANField(&cfg.LAN, key, val)
 		case "daemon":
 			applyDaemonField(&cfg.Daemon, key, val)
 		case "audio":
@@ -289,6 +350,18 @@ func SaveTOMLConfig(path string, cfg *TOMLConfig) error {
 		b.WriteString(fmt.Sprintf("xorg_driver = %q\n", cfg.Display.XorgDriver))
 	}
 	b.WriteString("\n")
+
+	// LAN
+	// Only emit the [lan] block when at least one field is non-default.
+	// Keeps the config file clean for tailnet-only installations.
+	if cfg.LAN.Enabled || cfg.LAN.BindAddress != "" {
+		b.WriteString("[lan]\n")
+		b.WriteString(fmt.Sprintf("enabled = %s\n", fmtBool(cfg.LAN.Enabled)))
+		if cfg.LAN.BindAddress != "" {
+			b.WriteString(fmt.Sprintf("bind_address = %q\n", cfg.LAN.BindAddress))
+		}
+		b.WriteString("\n")
+	}
 
 	// [daemon]
 	b.WriteString("[daemon]\n")
@@ -360,6 +433,16 @@ func ValidateConfig(cfg *TOMLConfig) []string {
 			// ok
 		default:
 			warns = append(warns, fmt.Sprintf("display.xorg_driver: unknown driver %q (expected nvidia|amdgpu|intel|modesetting|dummy or empty for auto-detect)", cfg.Display.XorgDriver))
+		}
+	}
+
+	// LAN
+	if cfg.LAN.BindAddress != "" {
+		// Very loose validation: any non-empty string is accepted; the
+		// caller will get an error from net.Listen at runtime if the
+		// address is malformed. We only catch obvious garbage here.
+		if strings.ContainsAny(cfg.LAN.BindAddress, " 	\n\r") {
+			warns = append(warns, fmt.Sprintf("lan.bind_address: contains whitespace: %q", cfg.LAN.BindAddress))
 		}
 	}
 
@@ -445,6 +528,15 @@ func applyDisplayField(d *DisplayConfig, key, val string) {
 		d.DefaultProfile = unquote(val)
 	case "xorg_driver":
 		d.XorgDriver = unquote(val)
+	}
+}
+
+func applyLANField(l *LANConfig, key, val string) {
+	switch key {
+	case "enabled":
+		l.Enabled = parseBool(val)
+	case "bind_address":
+		l.BindAddress = unquote(val)
 	}
 }
 

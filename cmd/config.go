@@ -210,8 +210,15 @@ func getTOMLField(cfg *config.TOMLConfig, key string) (string, error) {
 		return strconv.Itoa(cfg.Daemon.WebsocketPort), nil
 	case "http_port":
 		return strconv.Itoa(cfg.Daemon.HTTPPort), nil
+	case "lan_enabled":
+		if cfg.LAN.Enabled {
+			return "true", nil
+		}
+		return "false", nil
+	case "lan_bind_address":
+		return cfg.LAN.BindAddress, nil
 	default:
-		return "", fmt.Errorf("unknown TOML key: %q (valid keys: xorg_driver, default_backend, default_profile, auto_session, log_level, poll_interval, websocket_port, http_port)", key)
+		return "", fmt.Errorf("unknown TOML key: %q (valid keys: xorg_driver, default_backend, default_profile, auto_session, log_level, poll_interval, websocket_port, http_port, lan_enabled, lan_bind_address)", key)
 	}
 }
 
@@ -275,6 +282,8 @@ func tomlSectionForKey(key string) string {
 		return "audio"
 	case "trust_tailscale", "allowed_ips":
 		return "security"
+	case "lan_enabled", "lan_bind_address":
+		return "lan"
 	default:
 		return "?"
 	}
@@ -314,8 +323,16 @@ func setTOMLField(cfg *config.TOMLConfig, key, value string) error {
 			return fmt.Errorf("http_port: %w", err)
 		}
 		cfg.Daemon.HTTPPort = n
+	case "lan_enabled":
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("lan_enabled: %w", err)
+		}
+		cfg.LAN.Enabled = b
+	case "lan_bind_address":
+		cfg.LAN.BindAddress = value
 	default:
-		return fmt.Errorf("unknown TOML key: %q (valid keys: xorg_driver, default_backend, default_profile, auto_session, log_level, poll_interval, websocket_port, http_port)", key)
+		return fmt.Errorf("unknown TOML key: %q (valid keys: xorg_driver, default_backend, default_profile, auto_session, log_level, poll_interval, websocket_port, http_port, lan_enabled, lan_bind_address)", key)
 	}
 	return nil
 }

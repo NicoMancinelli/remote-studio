@@ -145,6 +145,18 @@ func printTOMLConfig(cfg *config.TOMLConfig, path string) {
 	fmt.Printf("    http_port        = %d\n", cfg.Daemon.HTTPPort)
 	fmt.Printf("    socket_activated = %s\n", fmtBoolDisplay(cfg.Daemon.SocketActivated))
 
+	// LAN
+	if cfg.LAN.Enabled || cfg.LAN.BindAddress != "" {
+		fmt.Println()
+		fmt.Println("  [lan]")
+		fmt.Printf("    enabled       = %s\n", fmtBoolDisplay(cfg.LAN.Enabled))
+		if cfg.LAN.BindAddress != "" {
+			fmt.Printf("    bind_address  = %s\n", cfg.LAN.BindAddress)
+		} else {
+			fmt.Println("    bind_address  = (0.0.0.0 default)")
+		}
+	}
+
 	// Audio
 	fmt.Println()
 	fmt.Println("  [audio]")
