@@ -19,6 +19,7 @@ on:
       - 'res.sh'
       - 'lib/**'
       - 'package/**'
+  workflow_dispatch:
 
 jobs:
   shellcheck:
