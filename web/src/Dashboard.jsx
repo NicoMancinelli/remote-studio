@@ -1,4 +1,4 @@
-import { Users, Activity, Wifi, AlertTriangle, Thermometer, Memory, MapPin } from 'lucide-react';
+import { Users, Activity, Wifi, AlertTriangle, Thermometer, MemoryStick, MapPin } from 'lucide-react';
 
 function LatencyBars({ latency }) {
   if (!latency || latency === "N/A" || latency === "-") return null;
@@ -85,7 +85,7 @@ export default function Dashboard({ status }) {
             </div>
           </div>
           <div className="t-box">
-            <Memory size={20} color="var(--text-secondary)" />
+            <MemoryStick size={20} color="var(--text-secondary)" />
             <div className="t-box-info">
               <span className="t-value small">{status.ram}</span>
               <span className="t-label">RAM</span>

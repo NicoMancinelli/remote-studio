@@ -204,15 +204,19 @@ generate_xorg() {
 
     # Detect GPU driver
     local gpu_info driver
-    gpu_info=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
-    if echo "$gpu_info" | grep -qi 'nvidia'; then
-        driver="nvidia"
-    elif echo "$gpu_info" | grep -qi 'amd\|ati\|radeon'; then
-        driver="amdgpu"
-    elif echo "$gpu_info" | grep -qi 'intel'; then
-        driver="intel"
+    if [ -n "${XORG_DRIVER:-}" ]; then
+        driver="$XORG_DRIVER"
     else
-        driver="modesetting"
+        gpu_info=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
+        if echo "$gpu_info" | grep -qi 'nvidia'; then
+            driver="nvidia"
+        elif echo "$gpu_info" | grep -qi 'amd\|ati\|radeon'; then
+            driver="amdgpu"
+        elif echo "$gpu_info" | grep -qi 'intel'; then
+            driver="intel"
+        else
+            driver="modesetting"
+        fi
     fi
 
     # Derive PreferredMode from the mac profile if available
@@ -223,11 +227,32 @@ generate_xorg() {
     fi
 
     {
-        echo 'Section "Device"'; echo '    Identifier "Configured Video Device"'; echo "    Driver \"$driver\""
+        echo 'Section "Device"'
+        echo '    Identifier "Configured Video Device"'
+        echo "    Driver \"$driver\""
         [ "$driver" = "nvidia" ] && echo '    Option "ConnectedMonitor" "DFP"'
-        echo 'EndSection'; echo
-        echo 'Section "Monitor"'; echo '    Identifier "Configured Monitor"'; printf '%s\n' "${lines[@]}"; echo "    Option \"PreferredMode\" \"$pref_mode\""; echo 'EndSection'; echo
-        echo 'Section "Screen"'; echo '    Identifier "Default Screen"'; echo '    Monitor "Configured Monitor"'; echo '    Device "Configured Video Device"'; echo '    DefaultDepth 24'; echo '    SubSection "Display"'; echo '        Depth 24'; echo "        Modes ${mode_names[*]} \"1024x768\""; echo '        Virtual 3840 2160'; echo '    EndSubSection'; echo 'EndSection'
+        [ "$driver" = "dummy" ] && echo '    VideoRam 512000'
+        echo 'EndSection'
+        echo
+        echo 'Section "Monitor"'
+        echo '    Identifier "Configured Monitor"'
+        echo '    HorizSync 28.0 - 200.0'
+        echo '    VertRefresh 43.0 - 150.0'
+        printf '%s\n' "${lines[@]}"
+        echo "    Option \"PreferredMode\" \"$pref_mode\""
+        echo 'EndSection'
+        echo
+        echo 'Section "Screen"'
+        echo '    Identifier "Default Screen"'
+        echo '    Monitor "Configured Monitor"'
+        echo '    Device "Configured Video Device"'
+        echo '    DefaultDepth 24'
+        echo '    SubSection "Display"'
+        echo '        Depth 24'
+        echo "        Modes ${mode_names[*]} \"1024x768\""
+        echo '        Virtual 3840 2160'
+        echo '    EndSubSection'
+        echo 'EndSection'
     } > "${out:-/dev/stdout}"
 }
 

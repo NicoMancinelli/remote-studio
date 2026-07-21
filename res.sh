@@ -63,6 +63,7 @@ load_startup_config() {
             DEFAULT_PROFILE) DEFAULT_PROFILE=$value ;;
             DEFAULT_SESSION_PROFILE) DEFAULT_SESSION_PROFILE=$value ;;
             DEFAULT_RUSTDESK_PRESET) DEFAULT_RUSTDESK_PRESET=$value ;;
+            XORG_DRIVER) XORG_DRIVER=$value ;;
             # AUTO_SESSION is consumed only by the Go/Python daemons
             # (os.Getenv in cmd/watch.go and pkg/daemon/daemon.go; os.environ.get
             # in daemon/remote_studio_daemon.py). Exported below after the loop
@@ -82,6 +83,7 @@ DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 # DEFAULT_SESSION_PROFILE overrides DEFAULT_PROFILE specifically for session start.
 # Falls back to DEFAULT_PROFILE so existing configs continue to work.
 DEFAULT_SESSION_PROFILE="${DEFAULT_SESSION_PROFILE:-$DEFAULT_PROFILE}"
+XORG_DRIVER="${XORG_DRIVER:-nvidia}"
 
 # ---- Cache state ----
 _WARN_CACHE=""

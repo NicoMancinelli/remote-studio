@@ -47,13 +47,18 @@ function App() {
   });
 
   const wsRef = useRef(null);
+  const connectRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const mountedRef = useRef(true);
 
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
     if (wsRef.current) {
-      try { wsRef.current.close(); } catch(e) {}
+      try {
+        wsRef.current.close();
+      } catch {
+        // Ignore stale socket cleanup errors during reconnect.
+      }
     }
 
     const socket = new WebSocket(`ws://${window.location.hostname}:9998`);
@@ -74,7 +79,7 @@ function App() {
       if (!reconnectTimerRef.current) {
         reconnectTimerRef.current = setTimeout(() => {
           reconnectTimerRef.current = null;
-          if (mountedRef.current) connect();
+          if (mountedRef.current) connectRef.current?.();
         }, RECONNECT_DELAY);
       }
     };
@@ -113,6 +118,10 @@ function App() {
 
     wsRef.current = socket;
   }, []);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -93,8 +93,17 @@ mkdir -p "$PKG_DIR/usr/share/remote-studio/daemon"
 cp "$ROOT_DIR/daemon/"*.py "$PKG_DIR/usr/share/remote-studio/daemon/"
 chmod 0755 "$PKG_DIR/usr/share/remote-studio/daemon/"*.py
 
+if [ -f "$ROOT_DIR/web/package.json" ]; then
+    command -v npm >/dev/null 2>&1 || {
+        echo "ERROR: npm is required to build the Web UI" >&2
+        exit 1
+    }
+    npm --prefix "$ROOT_DIR/web" install
+    npm --prefix "$ROOT_DIR/web" run build
+fi
+
 mkdir -p "$PKG_DIR/usr/share/remote-studio/web"
-cp -r "$ROOT_DIR/web/"* "$PKG_DIR/usr/share/remote-studio/web/"
+cp -r "$ROOT_DIR/web/dist" "$PKG_DIR/usr/share/remote-studio/web/"
 find "$PKG_DIR/usr/share/remote-studio/web/" -type f -exec chmod 0644 {} \;
 
 # Logrotate config

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPLET_DIR="$HOME/.local/share/cinnamon/applets/remote-studio@neek"
 RUSTDESK_DIR="$HOME/.config/rustdesk"
 CONFIG_DIR="$HOME/.config/remote-studio"
+WEB_DIR="$ROOT_DIR/web"
 
 DRY_RUN=false
 filtered_args=()
@@ -23,6 +24,22 @@ run() {
     else
         "$@"
     fi
+}
+
+run_root() {
+    if [ "$DRY_RUN" == "true" ]; then
+        echo "[DRY-RUN] $*"
+    elif [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v pkexec >/dev/null 2>&1; then
+        pkexec "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+user_systemd_available() {
+    systemctl --user show-environment >/dev/null 2>&1
 }
 
 usage() {
@@ -52,7 +69,7 @@ backup_configs() {
     [ -f "$RUSTDESK_DIR/RustDesk_default.toml" ] && run cp "$RUSTDESK_DIR/RustDesk_default.toml" "$backup_dir/RustDesk_default.toml"
     [ -f "$RUSTDESK_DIR/RustDesk2.toml" ] && run cp "$RUSTDESK_DIR/RustDesk2.toml" "$backup_dir/RustDesk2.toml"
     if [ -f /etc/X11/xorg.conf ]; then
-        run sudo cp /etc/X11/xorg.conf "$backup_dir/xorg.conf"
+        run_root cp /etc/X11/xorg.conf "$backup_dir/xorg.conf"
     fi
 
     echo "Backup written to $backup_dir"
@@ -78,19 +95,41 @@ rollback_configs() {
     echo "Rolling back from: $latest"
     [ -f "$latest/xsessionrc" ] && run cp -L "$latest/xsessionrc" "$HOME/.xsessionrc" && echo "  Restored .xsessionrc"
     [ -f "$latest/RustDesk_default.toml" ] && run cp "$latest/RustDesk_default.toml" "$RUSTDESK_DIR/RustDesk_default.toml" && echo "  Restored RustDesk_default.toml"
-    [ -f "$latest/xorg.conf" ] && run sudo cp "$latest/xorg.conf" /etc/X11/xorg.conf && echo "  Restored /etc/X11/xorg.conf"
+    [ -f "$latest/xorg.conf" ] && run_root cp "$latest/xorg.conf" /etc/X11/xorg.conf && echo "  Restored /etc/X11/xorg.conf"
     echo "Rollback complete. Restart LightDM or reboot if xorg.conf was changed."
+}
+
+build_web() {
+    [ -f "$WEB_DIR/package.json" ] || return 0
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "  Warning: npm not found. Web dashboard build skipped."
+        echo "  Install Node.js/npm, then run: cd $WEB_DIR && npm install && npm run build"
+        return 0
+    fi
+
+    if [ "$DRY_RUN" == "true" ]; then
+        echo "[DRY-RUN] npm --prefix $WEB_DIR install"
+        echo "[DRY-RUN] npm --prefix $WEB_DIR run build"
+    else
+        npm --prefix "$WEB_DIR" install
+        npm --prefix "$WEB_DIR" run build
+    fi
+    echo "  Built    $WEB_DIR/dist"
 }
 
 install_user() {
     run mkdir -p "$APPLET_DIR" "$RUSTDESK_DIR" "$CONFIG_DIR"
 
-    if [ -w /usr/local/bin ]; then
+    if [ "$(readlink -f /usr/local/bin/res 2>/dev/null)" = "$ROOT_DIR/res.sh" ]; then
+        echo "  Skipped  /usr/local/bin/res (already linked)"
+    elif [ -w /usr/local/bin ]; then
         run ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
+        echo "  Linked   /usr/local/bin/res -> $ROOT_DIR/res.sh"
     else
-        run sudo ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
+        run_root ln -sfn "$ROOT_DIR/res.sh" /usr/local/bin/res
+        echo "  Linked   /usr/local/bin/res -> $ROOT_DIR/res.sh"
     fi
-    echo "  Linked   /usr/local/bin/res -> $ROOT_DIR/res.sh"
 
     if [ -e "$HOME/.xsessionrc" ] && [ ! -L "$HOME/.xsessionrc" ]; then
         echo "  SKIPPED  ~/.xsessionrc exists and is not a symlink — move or remove it manually"
@@ -130,6 +169,8 @@ install_user() {
         echo "  Run: sudo apt install python3-websockets python3-gi"
     fi
 
+    build_web
+
     if [ -f "$ROOT_DIR/systemd/remote-studio.service" ]; then
         run mkdir -p "$HOME/.config/systemd/user"
         if [ "$DRY_RUN" == "true" ]; then
@@ -137,9 +178,14 @@ install_user() {
         else
             sed "s|/usr/share/remote-studio|$ROOT_DIR|g" "$ROOT_DIR/systemd/remote-studio.service" > "$HOME/.config/systemd/user/remote-studio.service"
         fi
-        run systemctl --user daemon-reload
-        run systemctl --user enable --now remote-studio.service
-        echo "  Enabled  systemd user service: remote-studio.service"
+        if [ "$DRY_RUN" == "true" ] || user_systemd_available; then
+            run systemctl --user daemon-reload
+            run systemctl --user enable --now remote-studio.service
+            echo "  Enabled  systemd user service: remote-studio.service"
+        else
+            echo "  Skipped  systemd user service (no user bus in this shell)"
+            echo "           From your desktop session, run: systemctl --user enable --now remote-studio.service"
+        fi
     fi
 
     echo ""
@@ -150,14 +196,14 @@ install_system() {
     local tmp
     tmp=$(mktemp)
     "$ROOT_DIR/res.sh" xorg "$tmp"
-    run sudo cp /etc/X11/xorg.conf "/etc/X11/xorg.conf.backup-$(date +%Y%m%d-%H%M%S)" || true
-    run sudo install -m 0644 -o root -g root "$tmp" /etc/X11/xorg.conf
+    run_root cp /etc/X11/xorg.conf "/etc/X11/xorg.conf.backup-$(date +%Y%m%d-%H%M%S)" || true
+    run_root install -m 0644 -o root -g root "$tmp" /etc/X11/xorg.conf
     rm -f "$tmp"
     echo "Installed /etc/X11/xorg.conf. Restart LightDM or reboot to load it."
 }
 
 uninstall_user() {
-    [ "$(readlink -f /usr/local/bin/res 2>/dev/null)" = "$ROOT_DIR/res.sh" ] && run sudo rm -f /usr/local/bin/res
+    [ "$(readlink -f /usr/local/bin/res 2>/dev/null)" = "$ROOT_DIR/res.sh" ] && run_root rm -f /usr/local/bin/res
     [ "$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)" = "$ROOT_DIR/config/xsessionrc" ] && run rm -f "$HOME/.xsessionrc"
     [ "$(readlink -f "$APPLET_DIR/applet.js" 2>/dev/null)" = "$ROOT_DIR/applet/applet.js" ] && run rm -f "$APPLET_DIR/applet.js"
     [ "$(readlink -f "$APPLET_DIR/metadata.json" 2>/dev/null)" = "$ROOT_DIR/applet/metadata.json" ] && run rm -f "$APPLET_DIR/metadata.json"

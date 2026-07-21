@@ -41,7 +41,7 @@ class RemoteStudioDaemon:
         self.dbus_conn.register_object(OBJECT_PATH, self.node_info, self.handle_method, self.get_property, self.set_property)
         
         # Start Poll Loop
-        GLib.timeout_add_seconds(self.poll_interval * 1000, self.poll_network)
+        GLib.timeout_add_seconds(self.poll_interval, self.poll_network)
         # Run immediately once
         self.poll_network()
 
@@ -150,7 +150,9 @@ class RemoteStudioDaemon:
         broadcast_status_to_websockets()
         return True # Continue GLib loop
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+WEB_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+WEB_DIST_DIR = os.path.join(WEB_ROOT, "dist")
+WEB_DIR = WEB_DIST_DIR if os.path.isdir(WEB_DIST_DIR) else WEB_ROOT
 
 def run_http_server():
     os.chdir(WEB_DIR)
