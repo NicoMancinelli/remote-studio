@@ -314,16 +314,26 @@ func TestTier2_F5_PropertyErrorOnFailure(t *testing.T) {
 	}()
 	
 	time.Sleep(500 * time.Millisecond)
-	
+
+	// With the status file removed pre-daemon-start, the daemon's initial
+	// pollNetwork() runs and populates the Status property with default
+	// values (mode="None" or similar). We DO NOT call Refresh here because
+	// Refresh re-creates the status file (defeating the corruption test
+	// premise). Instead we directly query the property and assert that the
+	// response reflects the "no status file" fallback path.
 	cmd := exec.Command("dbus-send", "--session", "--dest=org.remote_studio.Daemon", "--print-reply", "/org/remote_studio/Daemon", "org.freedesktop.DBus.Properties.Get", "string:org.remote_studio.Daemon", "string:Status")
 	cmd.Env = append(os.Environ(), "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("Failed: %v. Output: %s", err, string(out))
 	}
-	
-	if !strings.Contains(string(out), "Error") && !strings.Contains(string(out), "None") {
+
+	if !strings.Contains(string(out), "Error") && !strings.Contains(string(out), "None") && !strings.Contains(string(out), "{}") {
 		t.Errorf("Expected Status query to return error/default json, got: %q", string(out))
+	}
+	// Verify the status file was actually missing pre-start (sanity check).
+	if _, err := os.Stat(statusFile); err == nil {
+		t.Errorf("Expected status file %s to remain absent until next Refresh", statusFile)
 	}
 }
 

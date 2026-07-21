@@ -17,7 +17,7 @@ jobs:
       - name: Install runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bash whiptail x11-xserver-utils mesa-utils dpkg shellcheck bats nodejs logrotate
+          sudo apt-get install -y bash whiptail x11-xserver-utils mesa-utils dpkg shellcheck bats nodejs logrotate dbus
 
       - name: Run local release check
         run: make release-check

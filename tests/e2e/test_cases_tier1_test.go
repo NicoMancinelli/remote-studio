@@ -339,9 +339,19 @@ func TestTier1_F5_StatusQuery(t *testing.T) {
 			_ = daemonCmd.Process.Kill()
 		}
 	}()
-	
+
 	time.Sleep(500 * time.Millisecond)
-	
+
+	// Call Refresh first so the daemon populates its Status property from
+	// the initial poll. Without this, the property may still hold the empty
+	// default value (`{}`) declared at startup before the first poll completes
+	// in the test's isolated environment.
+	refreshCmd := exec.Command("dbus-send", "--session", "--dest=org.remote_studio.Daemon", "--print-reply", "/org/remote_studio/Daemon", "org.remote_studio.Daemon.Refresh")
+	refreshCmd.Env = append(os.Environ(), "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
+	if rOut, rErr := refreshCmd.CombinedOutput(); rErr != nil {
+		t.Fatalf("Failed to call Refresh over D-Bus: %v. Output: %s", rErr, string(rOut))
+	}
+
 	cmd := exec.Command("dbus-send", "--session", "--dest=org.remote_studio.Daemon", "--print-reply", "/org/remote_studio/Daemon", "org.freedesktop.DBus.Properties.Get", "string:org.remote_studio.Daemon", "string:Status")
 	cmd.Env = append(os.Environ(), "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
 	out, err := cmd.CombinedOutput()

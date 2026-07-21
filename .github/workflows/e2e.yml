@@ -1,0 +1,35 @@
+name: E2E test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  go-e2e:
+    name: Go e2e suite (tests/e2e/...)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Install runtime dependencies for the e2e harness
+        # dbus-daemon: required by the test harness to provide a private
+        # session bus for daemon ↔ test communication.
+        # dbus-send: cli used by tests to call Refresh / Properties.Get.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dbus dbus-x11
+
+      - name: Run e2e suite
+        # Per-test timeout (60s) prevents one bad test from blocking the
+        # whole run. Suite typically finishes in ~40s locally.
+        run: go test -timeout 60s ./tests/e2e/...

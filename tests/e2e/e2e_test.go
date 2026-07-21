@@ -73,7 +73,15 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	// 4. Optionally launch a private D-Bus daemon
+	// 4. Optionally launch a private D-Bus daemon.
+	// Two real-world bugs were fixed here:
+	//   (a) The original config contained <allow listen="*"/> which is invalid
+	//       in a <policy context="default"> block; dbus-daemon rejected it
+	//       silently and the address print never happened.
+	//   (b) On EOF / error from ReadString (e.g. dbus-daemon not installed
+	//       at all, or address printed to stderr in some versions), the harness
+	//       used to leave DbusAddress == "" and then 10+ tests silently SKIP'd.
+	//       Now we surface the stderr too, and a clean "not available" message.
 	var dbusCmd *exec.Cmd
 	if _, err := exec.LookPath("dbus-daemon"); err == nil {
 		dbusConfPath := filepath.Join(tempDir, "dbus.conf")
@@ -84,8 +92,8 @@ func TestMain(m *testing.M) {
   <listen>unix:tmpdir=/tmp</listen>
   <auth>EXTERNAL</auth>
   <policy context="default">
-    <allow send_destination="*" />
-    <allow listen="*" />
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
     <allow own="*" />
   </policy>
 </busconfig>`
@@ -93,25 +101,32 @@ func TestMain(m *testing.M) {
 			fmt.Println("Starting private dbus-daemon...")
 			dbusCmd = exec.Command("dbus-daemon", "--config-file="+dbusConfPath, "--print-address", "--nofork")
 			stdoutPipe, err := dbusCmd.StdoutPipe()
-			if err == nil {
-				if err := dbusCmd.Start(); err == nil {
+			if err != nil {
+				fmt.Printf("Failed to get dbus-daemon stdout pipe: %v\n", err)
+				dbusCmd = nil
+			} else {
+				var stderrBuf bytes.Buffer
+				dbusCmd.Stderr = &stderrBuf
+				if err := dbusCmd.Start(); err != nil {
+					fmt.Printf("Failed to start dbus-daemon: %v\n", err)
+					dbusCmd = nil
+				} else {
 					reader := bufio.NewReader(stdoutPipe)
 					addr, err := reader.ReadString('\n')
-					if err == nil {
+					if err != nil {
+						fmt.Printf("Failed to read D-Bus address (dbus-daemon stderr: %q): %v\n", strings.TrimSpace(stderrBuf.String()), err)
+						_ = dbusCmd.Process.Kill()
+						_ = dbusCmd.Wait()
+						dbusCmd = nil
+					} else {
 						DbusAddress = strings.TrimSpace(addr)
 						fmt.Printf("Private D-Bus session bus started at: %s\n", DbusAddress)
 						// Consume any remaining output in a goroutine to prevent blocking
 						go func() {
 							_, _ = io.Copy(io.Discard, stdoutPipe)
 						}()
-					} else {
-						fmt.Printf("Failed to read D-Bus address: %v\n", err)
 					}
-				} else {
-					fmt.Printf("Failed to start dbus-daemon: %v\n", err)
 				}
-			} else {
-				fmt.Printf("Failed to get dbus-daemon stdout pipe: %v\n", err)
 			}
 		}
 	} else {
@@ -165,6 +180,11 @@ func executeCmd(args []string, extraEnv []string) (string, string, error) {
 }
 
 // executeDaemon starts the compiled res binary in daemon mode asynchronously.
+// If DbusAddress is non-empty (the harness started a private dbus-daemon),
+// inject DBUS_SESSION_BUS_ADDRESS so the daemon joins the same bus that
+// the test's dbus-send / dbus-monitor commands will use. Without this, the
+// daemon defaults to the system session bus and the test's calls to
+// dbus-send never find it.
 func executeDaemon(args []string, extraEnv []string) (*exec.Cmd, error) {
 	cmd := exec.Command(ResBinPath, args...)
 
@@ -182,6 +202,9 @@ func executeDaemon(args []string, extraEnv []string) (*exec.Cmd, error) {
 	filteredEnv = append(filteredEnv, "XDG_RUNTIME_DIR="+IsolatedXdgRuntime)
 	filteredEnv = append(filteredEnv, "TERM=xterm-256color")
 	filteredEnv = append(filteredEnv, "DISPLAY=:99")
+	if DbusAddress != "" {
+		filteredEnv = append(filteredEnv, "DBUS_SESSION_BUS_ADDRESS="+DbusAddress)
+	}
 	filteredEnv = append(filteredEnv, extraEnv...)
 	cmd.Env = filteredEnv
 
