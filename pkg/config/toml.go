@@ -33,6 +33,15 @@ type GeneralConfig struct {
 type DisplayConfig struct {
 	DefaultBackend string `toml:"default_backend"`
 	DefaultProfile string `toml:"default_profile"`
+	// XorgDriver overrides the auto-detected Xorg driver when generating
+	// /etc/X11/xorg.conf (via `res xorg`). Common values:
+	//   "nvidia"       – proprietary NVIDIA driver
+	//   "amdgpu"       – AMD open driver (also matches ATI/Radeon)
+	//   "intel"        – Intel integrated graphics
+	//   "modesetting"  – generic kernel modesetting (default if unset)
+	//   "dummy"        – headless / CI use case
+	//   "" (empty)     – auto-detect from lspci (default)
+	XorgDriver string `toml:"xorg_driver"`
 }
 
 // DaemonConfig holds daemon/polling settings.
@@ -80,6 +89,10 @@ func DefaultTOMLConfig() *TOMLConfig {
 		Display: DisplayConfig{
 			DefaultBackend: "auto",
 			DefaultProfile: "mac",
+			// XorgDriver intentionally empty — the bash engine falls back
+			// to lspci auto-detection when this is unset. Empty preserves
+			// existing install behavior.
+			XorgDriver: "",
 		},
 		Daemon: DaemonConfig{
 			PollInterval:    5,
@@ -108,8 +121,8 @@ func DefaultTOMLConfig() *TOMLConfig {
 // ResolveTOMLConfigPath returns the path to the first TOML config found,
 // checking ~/.config/remote-studio/remote-studio.toml first.
 func ResolveTOMLConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err == nil {
+	// Explicit user path first (per-user overrides win).
+	if home, err := os.UserHomeDir(); err == nil {
 		p := filepath.Join(home, ".config", "remote-studio", "remote-studio.toml")
 		if _, err := os.Stat(p); err == nil {
 			return p
@@ -120,6 +133,24 @@ func ResolveTOMLConfigPath() string {
 		return p
 	}
 	return "/etc/remote-studio/remote-studio.toml"
+}
+
+// ResolveUserTOMLConfigPath returns the per-user TOML config path,
+// regardless of whether the file exists yet. Used by `res config set-toml`
+// and `res config init-toml` so writes always go to the user's
+// ~/.config/remote-studio/remote-studio.toml (the per-user layer) — never
+// the system-wide /etc/remote-studio/ one, which requires root and is
+// typically managed by the distribution package.
+//
+// Falls back to /etc/remote-studio/remote-studio.toml only if the user's
+// home directory can't be determined (a misconfigured environment, not
+// normal operation).
+func ResolveUserTOMLConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/etc/remote-studio/remote-studio.toml"
+	}
+	return filepath.Join(home, ".config", "remote-studio", "remote-studio.toml")
 }
 
 // ---------- Load ----------
@@ -247,10 +278,16 @@ func SaveTOMLConfig(path string, cfg *TOMLConfig) error {
 	b.WriteString(fmt.Sprintf("log_path = %q\n", cfg.General.LogPath))
 	b.WriteString("\n")
 
-	// [display]
+	// Display
 	b.WriteString("[display]\n")
 	b.WriteString(fmt.Sprintf("default_backend = %q\n", cfg.Display.DefaultBackend))
 	b.WriteString(fmt.Sprintf("default_profile = %q\n", cfg.Display.DefaultProfile))
+	// Only emit xorg_driver when explicitly set; empty = auto-detect, matches
+	// the bash engine's fallback path and avoids cluttering configs with
+	// the empty default.
+	if cfg.Display.XorgDriver != "" {
+		b.WriteString(fmt.Sprintf("xorg_driver = %q\n", cfg.Display.XorgDriver))
+	}
 	b.WriteString("\n")
 
 	// [daemon]
@@ -313,6 +350,17 @@ func ValidateConfig(cfg *TOMLConfig) []string {
 	}
 	if cfg.Display.DefaultProfile == "" {
 		warns = append(warns, "display.default_profile: empty (should reference a profile key)")
+	}
+	if cfg.Display.XorgDriver != "" {
+		// Validated against the bash engine's accepted set in
+		// lib/engine.sh::generate_xorg. Keep this list in sync if the
+		// engine's auto-detect regex gains more drivers.
+		switch cfg.Display.XorgDriver {
+		case "nvidia", "amdgpu", "intel", "modesetting", "dummy":
+			// ok
+		default:
+			warns = append(warns, fmt.Sprintf("display.xorg_driver: unknown driver %q (expected nvidia|amdgpu|intel|modesetting|dummy or empty for auto-detect)", cfg.Display.XorgDriver))
+		}
 	}
 
 	// Daemon
@@ -395,6 +443,8 @@ func applyDisplayField(d *DisplayConfig, key, val string) {
 		d.DefaultBackend = unquote(val)
 	case "default_profile":
 		d.DefaultProfile = unquote(val)
+	case "xorg_driver":
+		d.XorgDriver = unquote(val)
 	}
 }
 

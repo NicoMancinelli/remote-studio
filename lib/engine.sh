@@ -188,6 +188,80 @@ show_rotate() {
     echo "Rotated $OUTPUT to $dir"
 }
 
+# resolve_xorg_driver — single source of truth for the Xorg driver override.
+#
+# Precedence (highest first):
+#   1. Environment variable XORG_DRIVER (set by res.sh from
+#      remote-studio.conf, or by a CI runner, or by the user's shell).
+#   2. TOML config ~/.config/remote-studio/remote-studio.toml under
+#      [display] xorg_driver. Read via `res config get-toml xorg_driver`.
+#      Empty/unset TOML key → return empty (caller falls back to auto-detect).
+#   3. (caller handles) auto-detect via lspci.
+#
+# Output:
+#   - Prints the resolved driver name (e.g. "nvidia", "dummy") to stdout.
+#   - Returns empty string when neither env nor TOML has a value, so the
+#     caller can fall back to lspci auto-detection.
+#
+# Returns:
+#   0 always (the function is purely additive — it never blocks xorg generation).
+#   If `res` itself can't be located (e.g. PATH broken), returns empty.
+#
+# Note: callers must guard against re-entrancy. resolve_xorg_driver shells
+# out to `res`, which sources lib/engine.sh; if that happens mid-`generate_xorg`
+# we'd recursively re-enter generate_xorg. We guard by checking that we're
+# not already inside an xorg build (see _XORG_DRIVER_RESOLVING below).
+# resolve_xorg_driver — write the resolved Xorg driver to XORG_DRIVER.
+#
+# Precedence (highest first):
+#   1. The value already in XORG_DRIVER when this function is called.
+#      res.sh sets XORG_DRIVER from remote-studio.conf before invoking
+#      any engine function, and users can also export it in their shell.
+#      We honour that first so a single override wins regardless of where
+#      it came from.
+#   2. TOML config ~/.config/remote-studio/remote-studio.toml under
+#      [display] xorg_driver. Read via `res config get-toml xorg_driver`.
+#      Empty/unset TOML key → skip this tier.
+#   3. Auto-detect via lspci (the caller handles this; we leave
+#      XORG_DRIVER untouched).
+#
+# Result:
+#   - XORG_DRIVER is set (exported) to the resolved value, when one was
+#     found at tier 1 or 2. Tier 3 falls through with XORG_DRIVER empty.
+#   - Returns 0 always. Never blocks xorg generation.
+#
+# Re-entrancy: if resolve_xorg_driver is somehow called twice without the
+# first call resolving (defensive — should never happen), the recursion
+# guard short-circuits the second call.
+resolve_xorg_driver() {
+    if [ "${_XORG_DRIVER_RESOLVING:-0}" != "0" ]; then
+        return 0
+    fi
+    _XORG_DRIVER_RESOLVING=1
+
+    # Tier 1: pre-existing XORG_DRIVER (from env or remote-studio.conf).
+    if [ -n "${XORG_DRIVER:-}" ]; then
+        export XORG_DRIVER
+        return 0
+    fi
+
+    # Tier 2: TOML config. `res config get-toml xorg_driver` returns empty
+    # on missing config / unset key with exit 0, so we don't need to check
+    # the return code. The command runs in a subshell so any path/env
+    # weirdness in `res` itself can't poison this function.
+    if command -v res >/dev/null 2>&1; then
+        local toml_val
+        toml_val=$(res config get-toml xorg_driver 2>/dev/null || true)
+        if [ -n "$toml_val" ]; then
+            export XORG_DRIVER="$toml_val"
+            return 0
+        fi
+    fi
+
+    # Tier 3: leave XORG_DRIVER empty so the caller falls back to lspci.
+    return 0
+}
+
 generate_xorg() {
     local out="${1:-}"; local lines=(); local mode_names=()
     for key in mac mac15 fallback; do
@@ -202,11 +276,13 @@ generate_xorg() {
         lines+=("    Modeline \"$m\" $mp"); mode_names+=("\"$m\"")
     done
 
-    # Detect GPU driver
+    # Resolve the Xorg driver using precedence: env var > TOML > auto-detect.
+    # resolve_xorg_driver() lives in lib/engine.sh just above this function;
+    # see its docs for the full precedence chain.
     local gpu_info driver
-    if [ -n "${XORG_DRIVER:-}" ]; then
-        driver="$XORG_DRIVER"
-    else
+    resolve_xorg_driver
+    driver="${XORG_DRIVER:-}"
+    if [ -z "$driver" ]; then
         gpu_info=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' || true)
         if echo "$gpu_info" | grep -qi 'nvidia'; then
             driver="nvidia"

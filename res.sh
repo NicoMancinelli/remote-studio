@@ -83,7 +83,15 @@ DEFAULT_RUSTDESK_PRESET="${DEFAULT_RUSTDESK_PRESET:-default}"
 # DEFAULT_SESSION_PROFILE overrides DEFAULT_PROFILE specifically for session start.
 # Falls back to DEFAULT_PROFILE so existing configs continue to work.
 DEFAULT_SESSION_PROFILE="${DEFAULT_SESSION_PROFILE:-$DEFAULT_PROFILE}"
-XORG_DRIVER="${XORG_DRIVER:-nvidia}"
+# XORG_DRIVER is intentionally NOT defaulted here. The full precedence chain
+# (handled by resolve_xorg_driver() in lib/engine.sh) is:
+#   1. XORG_DRIVER set in remote-studio.conf (legacy layer, this file).
+#   2. display.xorg_driver in ~/.config/remote-studio/remote-studio.toml
+#      (new declarative layer; set via 'res config set-toml xorg_driver <value>').
+#   3. Auto-detect via lspci.
+# Removing the default here lets the TOML layer win when no conf override
+# exists. Users on existing installs keep their current behavior because
+# remote-studio.conf.example ships with XORG_DRIVER=nvidia.
 
 # ---- Cache state ----
 _WARN_CACHE=""

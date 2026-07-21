@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -80,16 +81,16 @@ var configInitTOMLCmd = &cobra.Command{
 	Long:  `Write a default remote-studio.toml to ~/.config/remote-studio/ if one does not exist.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path := home + "/.config/remote-studio/remote-studio.toml"
+		path := config.ResolveUserTOMLConfigPath()
 
 		forceFlag, _ := cmd.Flags().GetBool("force")
 
 		if _, err := os.Stat(path); err == nil && !forceFlag {
 			return fmt.Errorf("%s already exists (use --force to overwrite)", path)
+		}
+
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return err
 		}
 
 		cfg := config.DefaultTOMLConfig()
@@ -130,6 +131,11 @@ func printTOMLConfig(cfg *config.TOMLConfig, path string) {
 	fmt.Println("  [display]")
 	fmt.Printf("    default_backend  = %s\n", cfg.Display.DefaultBackend)
 	fmt.Printf("    default_profile  = %s\n", cfg.Display.DefaultProfile)
+	if cfg.Display.XorgDriver != "" {
+		fmt.Printf("    xorg_driver      = %s\n", cfg.Display.XorgDriver)
+	} else {
+		fmt.Println("    xorg_driver      = (auto-detect)")
+	}
 
 	// Daemon
 	fmt.Println()

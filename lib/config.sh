@@ -9,8 +9,27 @@ show_config() {
             echo "DEFAULT_SESSION_PROFILE=${DEFAULT_SESSION_PROFILE:-${DEFAULT_PROFILE}}"
             echo "DEFAULT_RUSTDESK_PRESET=${DEFAULT_RUSTDESK_PRESET}"
             echo "AUTO_SESSION=${AUTO_SESSION:-false}"
-            echo "XORG_DRIVER=${XORG_DRIVER}"
+            # XORG_DRIVER is resolved via precedence chain by resolve_xorg_driver()
+            # in lib/engine.sh at xorg-generation time. For display purposes
+            # we show the layered view: what the conf file says, what the TOML
+            # file says, and what the active engine value will be.
+            local conf_xorg="${XORG_DRIVER:-}"
+            local toml_xorg=""
+            if command -v res >/dev/null 2>&1; then
+                toml_xorg=$(res config get-toml xorg_driver 2>/dev/null || true)
+            fi
+            if [ -n "$conf_xorg" ]; then
+                echo "XORG_DRIVER=${conf_xorg}  # from remote-studio.conf"
+            elif [ -n "$toml_xorg" ]; then
+                echo "XORG_DRIVER=${toml_xorg}  # from remote-studio.toml"
+            else
+                echo "XORG_DRIVER=(auto-detect via lspci)"
+            fi
+            [ -n "$toml_xorg" ] && [ "$toml_xorg" != "$conf_xorg" ] && \
+                echo "# TOML xorg_driver = ${toml_xorg} (overridden by conf)"
             [ -f "$USER_CONFIG" ] && echo "# User config: $USER_CONFIG" || echo "# No user config file"
+            [ -n "$toml_xorg" ] || [ -f "$HOME/.config/remote-studio/remote-studio.toml" ] && \
+                echo "# TOML config: $HOME/.config/remote-studio/remote-studio.toml"
             ;;
         get)
             [ -z "${2:-}" ] && { echo "Usage: res config get KEY"; return 1; }
