@@ -6,8 +6,24 @@ import (
 	"os/exec"
 	"strings"
 
+	"remote-studio/pkg/config"
+
 	"github.com/spf13/cobra"
 )
+
+// tailscaleNotFoundMessage is printed when the tailscale binary is
+// missing AND LAN mode is off. Mirrors the bash version in
+// lib/services.sh::show_tailnet.
+const tailscaleNotFoundMessage = `tailscale: command not found
+Install with: curl -fsSL https://tailscale.com/install.sh | sh
+Or enable LAN mode: res config set-toml lan_enabled true`
+
+// lanModeMessage is printed when the user explicitly opted in to
+// LAN-only operation and runs a tailnet command.
+const lanModeMessage = `LAN mode active — tailnet disabled.
+LAN IP: %s
+RustDesk direct: %s:21118
+Use 'arp -a' or your router's admin UI to list LAN hosts.`
 
 var tailnetCmd = &cobra.Command{
 	Use:   "tailnet [peer [NODE] | doctor | hosts | exit-node]",
@@ -16,6 +32,22 @@ var tailnetCmd = &cobra.Command{
 		sub := ""
 		if len(args) > 0 {
 			sub = args[0]
+		}
+
+		// LAN mode: the tailnet is intentionally absent. Print a clear
+		// diagnostic and the LAN IP so the user knows where to point
+		// RustDesk. Mirrors the bash helper in lib/services.sh.
+		if config.LANModeActive() {
+			fmt.Printf(lanModeMessage+"\n", getLanIP(), getLanIP())
+			return nil
+		}
+
+		// No tailscale binary AND not in LAN mode. Tell the user how
+		// to fix it. We check this BEFORE running any subcommand so
+		// the user gets a clean error instead of empty output.
+		if _, err := exec.LookPath("tailscale"); err != nil {
+			fmt.Println(tailscaleNotFoundMessage)
+			return fmt.Errorf("tailscale binary not found")
 		}
 
 		switch sub {
@@ -87,7 +119,7 @@ var tailnetCmd = &cobra.Command{
 			}
 			fmt.Printf("Tailscale IP: %s\n", ip)
 			fmt.Printf("RustDesk direct: %s:21118\n", ip)
-			
+
 			// exit-node
 			out, _ := exec.Command("tailscale", "exit-node", "list").Output()
 			lines := strings.Split(string(out), "\n")
