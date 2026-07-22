@@ -272,3 +272,75 @@ TOML
     # Either journalctl output or the fallback message
     [[ "$output" == *"journalctl"* ]] || [ -n "$output" ] || [ -z "$output" ]
 }
+
+# ===========================================================================
+# show_tailnet — graceful degradation when Tailscale is missing or LAN mode
+# ===========================================================================
+
+@test "show_tailnet prints 'tailscale: command not found' when binary missing" {
+    # Build a PATH that has the bare minimum (sh + grep for echo) but no
+    # tailscale binary. /usr/bin/tailscale exists on the test host (this
+    # box is on a tailnet), so a plain PATH restriction isn't enough.
+    local minimal_path
+    minimal_path=$(mktemp -d)
+    ln -sf /usr/bin/bash "$minimal_path/sh"
+    ln -sf /usr/bin/echo "$minimal_path/echo"
+    ln -sf /usr/bin/awk "$minimal_path/awk"
+    ln -sf /usr/bin/grep "$minimal_path/grep"
+    ln -sf /usr/bin/hostname "$minimal_path/hostname"
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export PATH='$minimal_path'
+        export RES_LAN_MODE=''
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        source '$ROOT_DIR/lib/services.sh'
+        show_tailnet
+    "
+    rm -rf "$minimal_path"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"tailscale: command not found"* ]]
+}
+
+@test "show_tailnet prints 'LAN mode active' message when LAN mode is on" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=1
+        ROOT_DIR='$ROOT_DIR'
+        # hostname -I won't run since we don't have tailscale; the LAN
+        # mode path is taken before tailscale is consulted.
+        source '$ROOT_DIR/lib/core.sh'
+        source '$ROOT_DIR/lib/services.sh'
+        show_tailnet
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LAN mode active"* ]]
+    [[ "$output" == *"LAN IP"* ]]
+    [[ "$output" == *"RustDesk direct"* ]]
+}
+
+@test "show_tailnet_hosts prints 'LAN mode active' message when LAN mode is on" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=1
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        source '$ROOT_DIR/lib/services.sh'
+        show_tailnet_hosts
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LAN mode active"* ]]
+}
+
+@test "show_tailnet_doctor prints 'LAN mode active' message when LAN mode is on" {
+    run bash -c "
+        export HOME='$BATS_TEST_TMPDIR'
+        export RES_LAN_MODE=1
+        ROOT_DIR='$ROOT_DIR'
+        source '$ROOT_DIR/lib/core.sh'
+        source '$ROOT_DIR/lib/services.sh'
+        show_tailnet_doctor
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"LAN mode active"* ]]
+}

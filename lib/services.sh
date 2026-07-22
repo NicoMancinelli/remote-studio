@@ -1,7 +1,28 @@
 #!/bin/bash
 # Remote Studio — Tailscale and RustDesk service helpers
+#
+# All show_tailnet_* functions gracefully degrade when the tailscale
+# binary is missing or when LAN mode is active (in which case the
+# tailnet is intentionally absent). The user gets a clear "not in
+# use" message instead of a cryptic "command not found" error.
 
 show_tailnet() {
+    if lan_mode_active; then
+        # In LAN mode the tailnet is intentionally absent. Surface the
+        # LAN IP instead so the user can still copy/paste the address.
+        local lan
+        lan=$(hostname -I 2>/dev/null | awk '{print $1}')
+        echo "LAN mode active — tailnet disabled."
+        echo "LAN IP: ${lan:-unknown}"
+        echo "RustDesk direct: ${lan:-0.0.0.0}:21118"
+        return 0
+    fi
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "tailscale: command not found"
+        echo "Install with: curl -fsSL https://tailscale.com/install.sh | sh"
+        echo "Or enable LAN mode: res config set-toml lan_enabled true"
+        return 1
+    fi
     local ip
     ip=$(get_tailnet_ip)
     [ -z "$ip" ] && { echo "Tailscale IPv4 unavailable."; return 1; }
@@ -13,16 +34,42 @@ show_tailnet() {
 }
 
 show_tailnet_hosts() {
+    if lan_mode_active; then
+        echo "LAN mode active — tailnet peers unavailable."
+        echo "Use 'arp -a' or your router's admin UI to list LAN hosts."
+        return 0
+    fi
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "tailscale: command not found"
+        return 1
+    fi
     echo "Tailnet peers:"
     tailscale status --peers=true 2>/dev/null | tail -n +2 | awk '{printf "  %-20s %s\n", $2, $1}'
 }
 
 show_tailnet_peer() {
+    if lan_mode_active; then
+        echo "LAN mode active — 'res tailnet peer' requires Tailscale."
+        return 0
+    fi
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "tailscale: command not found"
+        return 1
+    fi
     local peer=$1; if [ -z "$peer" ]; then tailscale status --peers=true | head -n 20; return; fi
     echo "Checking $peer..."; tailscale ping "$peer"; echo; tailscale status | grep -i "$peer"
 }
 
 show_tailnet_doctor() {
+    if lan_mode_active; then
+        echo "LAN mode active — tailnet diagnostics skipped."
+        echo "Use 'res doctor' for general system health instead."
+        return 0
+    fi
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "tailscale: command not found"
+        return 1
+    fi
     echo "Tailnet Doctor"
     tailscale netcheck
 }

@@ -99,8 +99,33 @@ For the full command list, run `res help`. Common subcommands:
 | `res status` / `res status --json` / `res log [N]` | Pipe-delimited applet status, JSON for automation, log tail |
 | `res rustdesk apply <preset>` | Merge RustDesk quality/balanced/speed TOML presets while preserving identity |
 | `res tailnet [hosts\|peer NAME\|doctor]` | Tailscale status, peer listing, network diagnostics |
+| `res config set-toml lan_enabled true` | Enable LAN-only operation (no Tailscale required) |
 
 See `res help` for the complete surface.
+
+## LAN-only operation (no Tailscale required)
+
+`remote-studio` can run on a plain local network without Tailscale. Enable LAN mode:
+
+```bash
+# Per-host, persistent (preferred)
+res config set-toml lan_enabled true
+
+# Or per-session (env override)
+RES_LAN_MODE=1 res status
+
+# Optional: bind the daemon to a specific LAN IP
+res config set-toml lan_bind_address 192.168.1.50
+```
+
+When LAN mode is active:
+
+- **No Tailscale warnings.** The doctor, status panel, and tailnet commands all skip Tailscale checks instead of failing.
+- **LAN IP is the primary endpoint.** `res status` shows `192.168.1.x` directly instead of `tailnet_ip/lan_ip`. RustDesk direct-address uses the LAN IP on `:21118`.
+- **Daemon already binds to all interfaces** (`0.0.0.0:9998` WebSocket + `0.0.0.0:9999` HTTP). Other machines on the LAN can connect with no further setup.
+- **`res tailnet *` commands** degrade gracefully — they print a one-line "LAN mode active" message instead of erroring out.
+
+The bind address is opt-in: by default the daemon accepts connections on any interface (`0.0.0.0`). To restrict it to a single IP, set `lan.bind_address` (or `RES_LAN_BIND` for one-shot sessions).
 
 ## TUI Dashboard
 
