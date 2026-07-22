@@ -86,24 +86,7 @@ class RemoteStudioDaemon:
         users = len(ips)
         
         if users > 0 and self.prev_users == 0:
-            # Detect OS
-            trusted = True
-            peer_os = None
-            try:
-                ts_status = subprocess.check_output("tailscale status --json 2>/dev/null", shell=True, text=True)
-                ts_data = json.loads(ts_status)
-                trusted = False
-                for ip in ips:
-                    if ip == "127.0.0.1":
-                        trusted = True
-                        break
-                    for peer_key, peer_info in ts_data.get("Peer", {}).items():
-                        if ip in peer_info.get("TailscaleIPs", []):
-                            trusted = True
-                            peer_os = peer_info.get("OS", "unknown")
-                            break
-            except Exception:
-                pass # tailscale might not be installed
+            trusted, peer_os = evaluate_peer_trust(ips)
 
             if trusted:
                 print(f"Session connected from trusted IP. Detected OS: {peer_os}")
@@ -153,6 +136,73 @@ class RemoteStudioDaemon:
 WEB_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 WEB_DIST_DIR = os.path.join(WEB_ROOT, "dist")
 WEB_DIR = WEB_DIST_DIR if os.path.isdir(WEB_DIST_DIR) else WEB_ROOT
+
+
+def evaluate_peer_trust(ips):
+    """Decide whether a connecting peer should be trusted, based on
+    RES_LAN_MODE and the tailscale peer table.
+
+    Returns (trusted: bool, peer_os: Optional[str]).
+
+    Trust semantics (mirrors lib/core.sh::lan_mode_active + bash
+    trust precedence):
+
+      | LAN mode | tailscale | peer IP             | trusted |
+      |----------|-----------|---------------------|---------|
+      | off      | missing   | any                 | False   | (conservative)
+      | off      | present   | 127.0.0.1           | True    |
+      | off      | present   | in tailscale peer   | True    |
+      | off      | present   | not in tailnet      | False   |
+      | on       | missing   | any                 | True    | (LAN install)
+      | on       | present   | any                 | True    | (LAN bypass)
+
+    The `peer_os` field is only populated in the "tailscale present,
+    peer in tailnet" case — for all LAN-mode paths we don't bother
+    extracting it because every IP is trusted anyway.
+    """
+    trusted = True
+    peer_os = None
+    lan_mode = os.environ.get("RES_LAN_MODE", "").lower() in ("1", "true", "yes", "on")
+    try:
+        ts_status = subprocess.check_output(
+            "tailscale status --json 2>/dev/null", shell=True, text=True
+        )
+        ts_data = json.loads(ts_status)
+    except Exception:
+        # tailscale not installed, or failed to run.
+        if lan_mode:
+            # LAN-only install: no tailnet, but the user opted in to
+            # LAN, so every peer is implicitly trusted.
+            return True, None
+        # Conservative: tailscale-missing + tailnet mode is genuinely
+        # suspicious. Treat as untrusted.
+        return False, None
+
+    if lan_mode:
+        # LAN mode + tailscale installed: trust every peer (LAN bypass),
+        # but still try to enrich peer_os from the tailscale table.
+        for ip in ips:
+            for peer_info in ts_data.get("Peer", {}).values():
+                if ip in peer_info.get("TailscaleIPs", []):
+                    peer_os = peer_info.get("OS", "unknown")
+                    break
+        return True, peer_os
+
+    # tailscale present, LAN mode off: standard tailnet trust check.
+    trusted = False
+    for ip in ips:
+        if ip == "127.0.0.1":
+            trusted = True
+            break
+        for peer_info in ts_data.get("Peer", {}).values():
+            if ip in peer_info.get("TailscaleIPs", []):
+                trusted = True
+                peer_os = peer_info.get("OS", "unknown")
+                break
+        if trusted:
+            break
+    return trusted, peer_os
+
 
 def run_http_server():
     os.chdir(WEB_DIR)
