@@ -112,7 +112,7 @@ build_web() {
         echo "[DRY-RUN] npm --prefix $WEB_DIR install"
         echo "[DRY-RUN] npm --prefix $WEB_DIR run build"
     else
-        npm --prefix "$WEB_DIR" install
+        npm --prefix "$WEB_DIR" install --include=dev
         npm --prefix "$WEB_DIR" run build
     fi
     echo "  Built    $WEB_DIR/dist"

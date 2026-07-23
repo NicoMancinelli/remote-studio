@@ -48,7 +48,11 @@ show_doctor() {
     else
         tip=$(get_tailnet_ip)
         local ts_backend
-        ts_backend=$(tailscale status --json 2>/dev/null | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4 || true)
+        # Match both `"BackendState":"Running"` (compact) and
+        # `"BackendState": "Running"` (pretty-printed — newer tailscale
+        # versions emit the space). Same regex is in lib/core.sh
+        # and pkg/diagnostics/doctor.go — keep all three in sync.
+        ts_backend=$(tailscale status --json 2>/dev/null | grep -oE '"BackendState":[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4 || true)
         if [ -n "$tip" ]; then
             doctor_check "tailscale" "OK" "$tip (${ts_backend:-unknown})"
         elif lan_mode_active; then

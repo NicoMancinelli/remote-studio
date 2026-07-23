@@ -167,7 +167,11 @@ get_warning_summary() {
     local ts_json ts_ip ts_state
     ts_json=$(tailscale status --json 2>/dev/null)
     ts_ip=$(printf '%s' "$ts_json" | grep -o '"TailscaleIPs":\["[^"]*"' | grep -o '[0-9][0-9.]*' | head -1)
-    ts_state=$(printf '%s' "$ts_json" | grep -o '"BackendState":"[^"]*"' | cut -d'"' -f4)
+    # Match both `"BackendState":"Running"` (compact) and
+    # `"BackendState": "Running"` (pretty-printed — newer tailscale
+    # versions emit the space). Same regex is used in
+    # pkg/diagnostics/doctor.go::checkTailscale — keep in sync.
+    ts_state=$(printf '%s' "$ts_json" | grep -oE '"BackendState":[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
 
     if [[ "$renderer" == *llvmpipe* ]]; then warnings=$((warnings + 1)); messages+=("software-rendering"); fi
     if [ "$rustdesk_state" != "active" ]; then warnings=$((warnings + 1)); messages+=("rustdesk-${rustdesk_state:-unknown}"); fi

@@ -208,7 +208,10 @@ func checkTailscale() CheckResult {
 	cmdStatus := exec.Command("tailscale", "status", "--json")
 	outStatus, err := cmdStatus.Output()
 	if err == nil {
-		re := regexp.MustCompile(`"BackendState":"([^"]*)"`)
+		// Match both `"BackendState":"Running"` (compact) and
+		// `"BackendState": "Running"` (pretty-printed with space
+		// after the colon — newer tailscale versions emit this).
+		re := regexp.MustCompile(`"BackendState":\s*"([^"]*)"`)
 		matches := re.FindStringSubmatch(string(outStatus))
 		if len(matches) >= 2 {
 			tsBackend = matches[1]

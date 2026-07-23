@@ -119,6 +119,39 @@ load_profiles_file "$DEFAULT_PROFILES"
 load_profiles_file "$USER_PROFILES"
 
 # ---- CLI dispatch ----
+# _delegate_to_go_binary — exec into the Go binary if one is reachable,
+# otherwise return non-zero so the caller can fall through to its own
+# "unknown command" handler.
+#
+# Search order:
+#   1. Same dir as res.sh (works for both dev checkouts and .deb installs
+#      where /usr/local/bin/res -> /usr/share/remote-studio/res.sh and
+#      the Go binary sits next to it). We resolve symlinks so the path
+#      we use is the script's REAL location, not the symlink target.
+#   2. Explicit override via $RES_GO_BINARY.
+#   3. Fall through with non-zero exit so the caller's own error
+#      handler runs (e.g. "Unknown command: <name>").
+_delegate_to_go_binary() {
+    local bin=""
+    if [ -n "${BASH_SOURCE[0]:-}" ]; then
+        local _script _dir
+        # Resolve any symlinks so we find the binary next to the
+        # actual script, not next to the symlink.
+        _script="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+        _dir="$(cd "$(dirname "$_script")" && pwd)"
+        if [ -x "$_dir/remote-studio" ]; then
+            bin="$_dir/remote-studio"
+        fi
+    fi
+    if [ -z "$bin" ] && [ -n "${RES_GO_BINARY:-}" ] && [ -x "${RES_GO_BINARY}" ]; then
+        bin="${RES_GO_BINARY}"
+    fi
+    if [ -n "$bin" ]; then
+        exec "$bin" "$@"
+    fi
+    return 127
+}
+
 if [ -n "${1:-}" ]; then
     case "$1" in
         custom)
@@ -177,11 +210,28 @@ if [ -n "${1:-}" ]; then
         watch) show_watch "${2:-5}" ;;
         rotate) show_rotate "${2:-normal}" ;;
         profiles) show_profiles_list ;;
-        config) show_config "${2:-}" "${3:-}" "${4:-}" ;;
         version) echo "$VERSION" ;;
         help|-h|--help) show_help ;;
         speed|theme|night|caf|privacy|clip|service|audio|keys|fix|reset) do_action "$1" ;;
+        config)
+            # The bash layer handles the legacy KEY=VALUE surface
+            # (show/get/set). The TOML surface (get-toml/set-toml/
+            # show-toml/validate-toml/init-toml) is managed by the
+            # Go binary; delegate those.
+            case "${2:-}" in
+                get-toml|set-toml|show-toml|validate-toml|init-toml)
+                    _delegate_to_go_binary "$@"
+                    ;;
+                *)
+                    show_config "${2:-}" "${3:-}" "${4:-}"
+                    ;;
+            esac
+            ;;
         *)
+            # Unknown bash command. Try delegating to the Go binary
+            # so cobra-managed subcommands (res config get-toml /
+            # show-toml / etc.) work even when res is the bash shim.
+            _delegate_to_go_binary "$@"
             if [ -n "${PROFILES[$1]:-}" ]; then
                 apply_profile "$1" && record_recent_profile "$1"
             else

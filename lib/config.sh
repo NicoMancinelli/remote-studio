@@ -30,6 +30,12 @@ show_config() {
             [ -f "$USER_CONFIG" ] && echo "# User config: $USER_CONFIG" || echo "# No user config file"
             [ -n "$toml_xorg" ] || [ -f "$HOME/.config/remote-studio/remote-studio.toml" ] && \
                 echo "# TOML config: $HOME/.config/remote-studio/remote-studio.toml"
+            # The last command in this case branch may be a [ test that
+            # exits 1 when its file is missing. Force the function to
+            # always return success for the `show` subcommand so the
+            # CLI dispatcher's `exit` doesn't propagate a false
+            # failure.
+            return 0
             ;;
         get)
             [ -z "${2:-}" ] && { echo "Usage: res config get KEY"; return 1; }
