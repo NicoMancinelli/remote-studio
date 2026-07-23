@@ -58,6 +58,20 @@ func FindAndLoadConfig() (*Config, string, error) {
 	return cfg, path, nil
 }
 
+// Version is the remote-studio release version. The default ("9.1") is
+// used when the binary is built without the `-ldflags` injection; the
+// release Makefile target injects the same value from res.sh so the
+// two sources can't drift.
+//
+// To inject at build time:
+//
+//   go build -ldflags "-X remote-studio/pkg/config.Version=9.1.2" .
+//
+// `cmd/version` reads this so `./res version` and `make release-check`
+// agree on the number; `pkg/diagnostics` uses it as the expected tag
+// when comparing against the latest GitHub release.
+var Version = "9.1"
+
 func (c *Config) GetConfigValue(key string) string {
 	return c.Values[key]
 }

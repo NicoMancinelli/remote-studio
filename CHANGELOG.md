@@ -1,6 +1,53 @@
 # Changelog
 
-## [Unreleased]
+## [9.1] — 2026-07-22
+
+### Added
+- **TOML config migration.** `display.xorg_driver` and a new `[lan]`
+  section are now first-class config keys. Precedence is env var > TOML >
+  built-in default. New CLI surface: `res config {get,set}-toml KEY [VALUE]`
+  for scripted config edits without parsing TOML by hand.
+- **LAN-only operation mode.** `res` can now run on a plain local network
+  with no Tailscale installed. Enable with
+  `res config set-toml lan_enabled true` or `RES_LAN_MODE=1`. Optional
+  bind override via `lan.bind_address` (or `RES_LAN_BIND` for one-shot
+  sessions). All three runtime surfaces (Go daemon, bash engine, Python
+  daemon) honour the same precedence chain.
+- **Graceful `tailscale` degradation.** When the binary is missing OR
+  LAN mode is on, `res tailnet` (both bash and Go paths) prints a clear
+  diagnostic instead of empty output or a cryptic error.
+- **Python daemon peer-trust.** Refactored out of the inline event handler
+  into `evaluate_peer_trust(ips)` so it can be unit-tested. New behaviour:
+  in LAN mode every peer is implicitly trusted (it's a private LAN); in
+  tailnet mode the conservative tailscale-peer-table check still applies.
+- **REMOTE_STUDIO.md**: new "LAN-only operation" section with copy-paste
+  commands and the full behaviour matrix.
+- **Debian package builds** now force root-owned archive entries instead
+  of preserving the local build user.
+
+### Tests
+- 9 new Go unit tests (`pkg/config/toml_lan_test.go`) covering env/TOML
+  precedence, defaults, missing-file handling, and TOML round-trips for
+  the `[lan]` block.
+- 9 new bats tests covering `lan_mode_active` (bash helper), warning
+  suppression in `get_warning_summary`, and graceful `res tailnet`
+  degradation.
+- 2 new Go integration tests (`cmd/tailnet_test.go`) verifying the LAN
+  message + tailscale-missing diagnostic at the binary level.
+- 8 new Python unit tests (`daemon/test_tailscale_trust.py`) covering
+  the full 2×2 trust matrix (LAN mode × tailscale present × peer IP).
+- Total: 134 bats + 116 Go + 8 Python + e2e (98 PASS / 2 SKIP / 0 FAIL).
+
+### Fixed
+- LAN-mode peer-trust: `tailscale-missing` no longer silently marks every
+  RustDesk session as untrusted on a LAN-only install.
+- `cmd/tailnet` previously produced empty output when tailscale was
+  missing or LAN mode was on. Now prints a clean diagnostic.
+- Init wizard: "install Tailscale?" prompt is suppressed when LAN mode is
+  active (it was a misleading CTA for users who explicitly opted out of
+  Tailscale).
+
+## [9.0] — 2026-06-13
 
 ### Added
 - `res status --json` for automation while preserving the pipe-delimited applet status file.

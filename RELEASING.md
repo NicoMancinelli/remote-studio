@@ -14,7 +14,7 @@ Remote Studio uses simple `MAJOR.MINOR` versioning. Bump:
 
 Edit the `VERSION=` line in `res.sh`:
 
-    VERSION="9.0"
+    VERSION="9.1"
 
 Edit `applet/metadata.json` and bump the matching version field.
 
@@ -22,7 +22,7 @@ Edit `applet/metadata.json` and bump the matching version field.
 
 Move everything under `## [Unreleased]` into a new dated section:
 
-    ## [9.0] — 2026-04-30
+    ## [9.1] — 2026-07-22
 
     - feature ...
 
@@ -37,8 +37,8 @@ This runs the local CI suite, installer dry-runs, and a Debian package build. Ev
 ### 4. Commit and tag
 
     git add res.sh applet/metadata.json CHANGELOG.md
-    git commit -m "chore: release v9.0"
-    git tag v9.0
+    git commit -m "chore: release v9.1"
+    git tag v9.1
     git push origin master --tags
 
 ### 5. The CI does the rest

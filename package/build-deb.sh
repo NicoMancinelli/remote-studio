@@ -98,7 +98,7 @@ if [ -f "$ROOT_DIR/web/package.json" ]; then
         echo "ERROR: npm is required to build the Web UI" >&2
         exit 1
     }
-    npm --prefix "$ROOT_DIR/web" install
+    npm --prefix "$ROOT_DIR/web" install --include=dev
     npm --prefix "$ROOT_DIR/web" run build
 fi
 

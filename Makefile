@@ -1,5 +1,12 @@
 .PHONY: install doctor lint test ci release release-check deb
 
+# Version is sourced from res.sh — single source of truth. Used at
+# build time to inject the value into remote-studio/pkg/config.Version
+# via -ldflags, so ./res version and the GitHub-release comparison in
+# doctor can't drift from the VERSION= line.
+VERSION := $(shell grep '^VERSION=' res.sh | head -1 | cut -d'"' -f2)
+LDFLAGS := -X 'remote-studio/pkg/config.Version=$(VERSION)'
+
 install:
 	./install.sh install
 
@@ -24,6 +31,10 @@ release:
 	./res.sh xorg config/xorg.conf
 
 release-check: ci
+	# Rebuild the binary with the version injected so ./res version
+	# matches res.sh's VERSION= line. This makes the .deb contents and
+	# the doctor check agree on the same number.
+	go build -ldflags "$(LDFLAGS)" -o remote-studio .
 	./install.sh --dry-run system >/dev/null
 	bash package/build-deb.sh >/dev/null
 	deb="dist/remote-studio_$$(./res.sh version)_all.deb"; \

@@ -331,7 +331,11 @@ func checkGhRelease() CheckResult {
 	}
 
 	tagName := strings.TrimPrefix(release.TagName, "v")
-	currentVersion := "9.0"
+	// currentVersion comes from a single source of truth in pkg/config.
+	// The release Makefile target injects this at build time via
+	// `-ldflags "-X remote-studio/pkg/config.Version=$(grep ...)"` so the
+	// version number can't drift between the binary and the tag.
+	currentVersion := config.Version
 
 	if tagName == "" {
 		return CheckResult{Name: "gh-release", Status: "INFO", Message: "could not fetch (offline or no releases)"}
