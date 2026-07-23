@@ -1,6 +1,6 @@
 # Remote Studio
 
-> Linux Mint Cinnamon control layer for RustDesk sessions over Tailscale — optimised for Apple devices.
+> Linux Mint Cinnamon control layer for RustDesk sessions — optimised for Apple devices, runs on a tailnet or a plain LAN.
 
 [![CI](https://github.com/NicoMancinelli/remote-studio/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/NicoMancinelli/remote-studio/actions/workflows/shellcheck.yml)
 [![Integration](https://github.com/NicoMancinelli/remote-studio/actions/workflows/integration.yml/badge.svg)](https://github.com/NicoMancinelli/remote-studio/actions/workflows/integration.yml)
@@ -32,11 +32,12 @@ Remote Studio manages headless Xorg display modes, device-specific scaling profi
 - **Headless Xorg** — generates `/etc/X11/xorg.conf` with dummy/NVIDIA driver config so custom resolutions survive reboots
 - **Session lifecycle** — `res session start` / `res session stop` apply a profile before the client connects and restore defaults when they leave
 - **RustDesk presets** — `quality`, `balanced`, `speed` TOML presets merged at runtime without touching your identity or password files
-- **Tailscale integration** — `res tailnet` shows your address, peer health, and direct vs relayed path detection
+- **Tailscale integration** — `res tailnet` shows your address, peer health, and direct vs relayed path detection. LAN mode available via `res config set-toml lan_enabled true` for plain-LAN installs without Tailscale.
 - **Interactive TUI** — full whiptail dashboard when run without arguments; plain CLI when called with an argument
 - **Cinnamon panel applet** — live connection indicator (● Direct / ◐ Relayed), user count, warnings, and a GUI menu
 - **Automatic watch loop** — `res watch` (or the included systemd user unit) detects new RustDesk connections and applies a profile automatically
 - **Doctor & automation status** — `res doctor` checks symlinks, Xorg, RustDesk, Tailscale, renderer, and more; `res status --json` gives scripts a stable machine-readable snapshot
+- **TOML configuration** — declarative config in `~/.config/remote-studio/remote-studio.toml` with `res config {get,set}-toml` for scripted edits
 - **Debian package** — pre-built `.deb` attached to every GitHub release; build your own with `make deb`
 
 ---
@@ -49,7 +50,7 @@ Remote Studio manages headless Xorg display modes, device-specific scaling profi
 | `bash` ≥ 5, `xrandr`, `whiptail` | Pre-installed on Linux Mint |
 | `gsettings` (part of `glib2`) | Pre-installed on Cinnamon |
 | [RustDesk](https://rustdesk.com/) | Installed and running as a service |
-| [Tailscale](https://tailscale.com/) | Authenticated on your tailnet |
+| [Tailscale](https://tailscale.com/) | Authenticated on your tailnet — or skip and use LAN mode (see below) |
 
 Optional but recommended: an **HDMI dummy plug** in the GPU's HDMI port to activate hardware rendering on headless machines (see [GPU Setup](#gpu-setup--hdmi-dummy-plug) in REMOTE_STUDIO.md).
 
