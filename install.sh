@@ -118,6 +118,58 @@ build_web() {
     echo "  Built    $WEB_DIR/dist"
 }
 
+# Install (or rewrite) a single user-systemd unit, with path rewriting
+# so the daemon in development trees runs against the local checkout.
+# Path rewriting rules:
+#   /usr/share/remote-studio   =>  $ROOT_DIR
+#   /usr/bin/python3           =>  /usr/bin/python3 (left intact)
+#   /usr/local/bin/res         =>  $ROOT_DIR/res.sh (so the bash shim
+#                                           points at the local copy)
+# The "less surprising" rule for the socket-activated service is to
+# point ExecStart directly at the Python daemon, since the bash shim
+# does not implement a ``--socket-activated`` flag.
+_install_user_systemd_unit() {
+    local src="$1" dst="$2"
+    if [ "$DRY_RUN" == "true" ]; then
+        echo "[DRY-RUN] install $src into $dst (path-rewritten)"
+    else
+        mkdir -p "$(dirname "$dst")"
+        sed -e "s|/usr/share/remote-studio|$ROOT_DIR|g" "$src" > "$dst"
+    fi
+}
+
+install_user_systemd() {
+    local user_systemd_dir="$HOME/.config/systemd/user"
+    _install_user_systemd_unit \
+        "$ROOT_DIR/systemd/remote-studio.service" \
+        "$user_systemd_dir/remote-studio.service"
+
+    # Socket-activated daemon (preferred). Both the socket and the
+    # service are installed so systemd can spawn the daemon on first
+    # connection. The direct service is then disabled so it can't
+    # race the socket on 9998/9999.
+    _install_user_systemd_unit \
+        "$ROOT_DIR/systemd/remote-studio-socket.service" \
+        "$user_systemd_dir/remote-studio-socket.service"
+    _install_user_systemd_unit \
+        "$ROOT_DIR/systemd/remote-studio.socket" \
+        "$user_systemd_dir/remote-studio.socket"
+
+    if [ "$DRY_RUN" == "true" ] || user_systemd_available; then
+        run systemctl --user daemon-reload
+        # Socket-activated: stop+disable the direct service (back-compat
+        # with v9.1 installs), then enable+start the socket unit. The
+        # service unit has ``Requires=remote-studio.socket`` so it
+        # auto-starts when the first connection arrives.
+        run systemctl --user disable --now remote-studio.service 2>/dev/null || true
+        run systemctl --user enable --now remote-studio.socket
+        echo "  Enabled  systemd user socket: remote-studio.socket (daemon starts on demand)"
+    else
+        echo "  Skipped  systemd user units (no user bus in this shell)"
+        echo "           From your desktop session, run: systemctl --user enable --now remote-studio.socket"
+    fi
+}
+
 install_user() {
     run mkdir -p "$APPLET_DIR" "$RUSTDESK_DIR" "$CONFIG_DIR"
 
@@ -172,20 +224,7 @@ install_user() {
     build_web
 
     if [ -f "$ROOT_DIR/systemd/remote-studio.service" ]; then
-        run mkdir -p "$HOME/.config/systemd/user"
-        if [ "$DRY_RUN" == "true" ]; then
-            echo "[DRY-RUN] sed 's|/usr/share/remote-studio|$ROOT_DIR|g' $ROOT_DIR/systemd/remote-studio.service > $HOME/.config/systemd/user/remote-studio.service"
-        else
-            sed "s|/usr/share/remote-studio|$ROOT_DIR|g" "$ROOT_DIR/systemd/remote-studio.service" > "$HOME/.config/systemd/user/remote-studio.service"
-        fi
-        if [ "$DRY_RUN" == "true" ] || user_systemd_available; then
-            run systemctl --user daemon-reload
-            run systemctl --user enable --now remote-studio.service
-            echo "  Enabled  systemd user service: remote-studio.service"
-        else
-            echo "  Skipped  systemd user service (no user bus in this shell)"
-            echo "           From your desktop session, run: systemctl --user enable --now remote-studio.service"
-        fi
+        install_user_systemd
     fi
 
     echo ""
@@ -207,6 +246,15 @@ uninstall_user() {
     [ "$(readlink -f "$HOME/.xsessionrc" 2>/dev/null)" = "$ROOT_DIR/config/xsessionrc" ] && run rm -f "$HOME/.xsessionrc"
     [ "$(readlink -f "$APPLET_DIR/applet.js" 2>/dev/null)" = "$ROOT_DIR/applet/applet.js" ] && run rm -f "$APPLET_DIR/applet.js"
     [ "$(readlink -f "$APPLET_DIR/metadata.json" 2>/dev/null)" = "$ROOT_DIR/applet/metadata.json" ] && run rm -f "$APPLET_DIR/metadata.json"
+    # Drop the user systemd units if we still own them.
+    if [ -f "$HOME/.config/systemd/user/remote-studio.socket" ]; then
+        run systemctl --user disable --now remote-studio.socket 2>/dev/null || true
+        run systemctl --user disable --now remote-studio.service 2>/dev/null || true
+        run rm -f "$HOME/.config/systemd/user/remote-studio.socket" \
+                "$HOME/.config/systemd/user/remote-studio-socket.service" \
+                "$HOME/.config/systemd/user/remote-studio.service"
+        run systemctl --user daemon-reload 2>/dev/null || true
+    fi
     echo "Remote Studio user links removed."
 }
 

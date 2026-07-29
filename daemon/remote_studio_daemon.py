@@ -11,6 +11,12 @@ from http.server import SimpleHTTPRequestHandler
 import socketserver
 from gi.repository import GLib, Gio
 
+# Socket activation support: when systemd starts the daemon via
+# remote-studio.socket, LISTEN_PID and LISTEN_FDS are set and the
+# inherited FDs (3=WS, 4=HTTP) are already bound. The daemon consumes
+# them instead of calling bind() itself. See daemon/listen_fds.py.
+from listen_fds import get_listeners
+
 BUS_NAME = "org.remote_studio.Daemon"
 OBJECT_PATH = "/org/remote_studio/Daemon"
 
@@ -36,10 +42,10 @@ class RemoteStudioDaemon:
         # D-Bus Setup
         self.dbus_conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         Gio.bus_own_name_on_connection(self.dbus_conn, BUS_NAME, Gio.BusNameOwnerFlags.NONE, None, None)
-        
+
         self.node_info = Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0]
         self.dbus_conn.register_object(OBJECT_PATH, self.node_info, self.handle_method, self.get_property, self.set_property)
-        
+
         # Start Poll Loop
         GLib.timeout_add_seconds(self.poll_interval, self.poll_network)
         # Run immediately once
@@ -84,7 +90,7 @@ class RemoteStudioDaemon:
 
         self.active_ips = ips
         users = len(ips)
-        
+
         if users > 0 and self.prev_users == 0:
             trusted, peer_os = evaluate_peer_trust(ips)
 
@@ -92,7 +98,7 @@ class RemoteStudioDaemon:
                 print(f"Session connected from trusted IP. Detected OS: {peer_os}")
                 self.status = "Active"
                 self.emit_status_changed()
-                
+
                 # Auto profile logic
                 profile = "mac" # default to mac
                 if peer_os == "iOS":
@@ -103,14 +109,14 @@ class RemoteStudioDaemon:
                     profile = "fallback"
                 elif peer_os == "linux":
                     profile = "fallback"
-                    
+
                 # Note: AUTO_SESSION check could go here if we want to respect the env var
                 auto = os.environ.get("AUTO_SESSION", "true")
                 if auto == "true":
                     subprocess.Popen(["res", "session", "start", profile])
             else:
                 print(f"Session connected from UNTRUSTED IP. Ignored.")
-                
+
         elif users == 0 and self.prev_users > 0:
             print("Session disconnected.")
             self.status = "Idle"
@@ -120,7 +126,7 @@ class RemoteStudioDaemon:
                 subprocess.Popen(["res", "session", "stop"])
 
         self.prev_users = users
-        
+
         # Trigger standard status file update for legacy/CLI apps
         try:
             # Write to STATUS_FILE directly or call `show_status` via res.sh
@@ -129,7 +135,7 @@ class RemoteStudioDaemon:
             subprocess.Popen(["bash", res_bin, "status"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
-            
+
         broadcast_status_to_websockets()
         return True # Continue GLib loop
 
@@ -157,7 +163,7 @@ def evaluate_peer_trust(ips):
       | on       | present   | any                 | True    | (LAN bypass)
 
     The `peer_os` field is only populated in the "tailscale present,
-    peer in tailnet" case — for all LAN-mode paths we don't bother
+    peer in tailnet" case - for all LAN-mode paths we don't bother
     extracting it because every IP is trusted anyway.
     """
     trusted = True
@@ -204,7 +210,79 @@ def evaluate_peer_trust(ips):
     return trusted, peer_os
 
 
-def run_http_server():
+def _serve_http_on_listener(listener):
+    """Serve the static web UI on a pre-bound socket (no bind).
+
+    The standard ``socketserver.TCPServer`` constructor takes a
+    ``(host, port)`` tuple and calls ``bind()`` on it. We don't want
+    that — the socket is already bound by systemd. The trick is to
+    subclass ``ThreadingTCPServer`` and override ``server_bind`` and
+    ``server_activate`` to be no-ops, then assign the pre-bound socket
+    to ``self.socket``.
+    """
+    os.chdir(WEB_DIR)
+    handler = SimpleHTTPRequestHandler
+
+    class _PreBoundServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+        def server_bind(self):
+            pass  # already bound by systemd
+        def server_activate(self):
+            pass
+
+    server = _PreBoundServer(listener.getsockname(), handler)
+    server.socket = listener
+    print("Serving Web UI on socket-activated fd (HTTP)")
+    server.serve_forever()
+
+
+def _serve_ws_on_listener(listener):
+    """Serve the WebSocket on a pre-bound listener.
+
+    websockets 10.x does not expose a ``sock=`` parameter on
+    ``serve()``, so we drive the asyncio listener directly via
+    ``asyncio.start_server`` with a pre-bound socket. Each accepted
+    client is wrapped in a ``WebSocketServerProtocol`` and the existing
+    ``ws_handler`` coroutine is awaited.
+    """
+    global ws_loop
+    from websockets.legacy.server import WebSocketServerProtocol
+
+    ws_loop = asyncio.new_event_loop()
+    loop = ws_loop
+    asyncio.set_event_loop(loop)
+
+    async def _on_client(reader, writer):
+        try:
+            proto = WebSocketServerProtocol()
+            proto.connection_made(reader)
+            # The ws_handler contract is (websocket, path).
+            await ws_handler(proto, "/")
+        except Exception:
+            pass
+
+    async def _run():
+        await asyncio.start_server(_on_client, sock=listener)
+        print("Serving WebSocket on socket-activated fd (WS)")
+        await asyncio.Future()  # run forever
+
+    loop.run_until_complete(_run())
+    loop.run_forever()
+
+
+def run_http_server(listener=None):
+    """Run the HTTP server on ``listener`` if given, otherwise bind 9999.
+
+    When ``listener`` is supplied (the socket-activated case), the
+    socket is already bound and listening so we just ``serve_forever()``
+    on it. Otherwise we fall back to the original bind-on-0.0.0.0:9999
+    path so the daemon still works on a dev box without socket
+    activation.
+    """
+    if listener is not None:
+        _serve_http_on_listener(listener)
+        return
     os.chdir(WEB_DIR)
     handler = SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", 9999), handler) as httpd:
@@ -220,13 +298,13 @@ def broadcast_status_to_websockets():
         json_status = subprocess.check_output("res status --json", shell=True, text=True).strip()
     except Exception:
         json_status = '{"mode": "Error", "status": "Error fetching status"}'
-    
+
     async def _broadcast():
         message = json.dumps({"type": "status_full", "data": json.loads(json_status)})
         coros = [client.send(message) for client in connected_clients]
         if coros:
             await asyncio.gather(*coros, return_exceptions=True)
-            
+
     asyncio.run_coroutine_threadsafe(_broadcast(), ws_loop)
 
 
@@ -249,23 +327,40 @@ async def ws_handler(websocket, path):
 
 ws_loop = None
 
-def run_ws_server():
+def run_ws_server(listener=None):
+    """Run the WebSocket server on ``listener`` if given, otherwise bind 9998."""
     global ws_loop
+    if listener is not None:
+        _serve_ws_on_listener(listener)
+        return
     ws_loop = asyncio.new_event_loop()
     loop = ws_loop
     asyncio.set_event_loop(loop)
     start_server = websockets.serve(ws_handler, "0.0.0.0", 9998)
     loop.run_until_complete(start_server)
+    print("Serving WebSocket on ws://0.0.0.0:9998")
     loop.run_forever()
 
 if __name__ == "__main__":
+    # Resolve listeners once at startup. If socket-activated, the
+    # inherited FDs are used and the daemon does not bind 9998/9999
+    # itself. The print line is intentionally the same shape as the
+    # non-activated case so deployment logs stay consistent.
+    listeners, _activated = get_listeners(expected=2)
+    if listeners is None:
+        ws_listener = None
+        http_listener = None
+    else:
+        # Order matches remote-studio.socket: fd 3 = WebSocket, fd 4 = HTTP.
+        ws_listener, http_listener = listeners[0], listeners[1]
+
     daemon = RemoteStudioDaemon()
     print("Remote Studio Python Daemon running on D-Bus...")
-    
+
     # Start web servers
-    threading.Thread(target=run_http_server, daemon=True).start()
-    threading.Thread(target=run_ws_server, daemon=True).start()
-    
+    threading.Thread(target=run_http_server, args=(http_listener,), daemon=True).start()
+    threading.Thread(target=run_ws_server,    args=(ws_listener,),  daemon=True).start()
+
     loop = GLib.MainLoop()
     try:
         loop.run()
