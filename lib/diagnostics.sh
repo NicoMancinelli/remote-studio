@@ -261,16 +261,22 @@ show_status() {
     fi
     mkdir -p "$STATUS_DIR"
     check_auto_speed
-    # Codec field (index 12): last codec seen in RustDesk log, empty when no session
-    local rd_codec=""
-    if [ "$USERS" -gt 0 ]; then
-        local _log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
-        [ -f "$_log_file" ] || _log_file="$HOME/.rustdesk/log/rustdesk.log"
-        [ -f "$_log_file" ] && rd_codec=$(grep -i 'codec' "$_log_file" 2>/dev/null | tail -1 \
-            | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true)
+    # Codec field (index 12): last codec seen in RustDesk log, empty when no session.
+    # FPS (index 13) and bitrate (index 14) follow the same contract — empty
+    # when not in a session, populated otherwise. The shared helpers live in
+    # lib/services.sh so `res rustdesk status` and the applet agree.
+    local rd_codec="" rd_fps="" rd_bitrate=""
+    local _log_file="$HOME/.local/share/rustdesk/log/rustdesk.log"
+    [ -f "$_log_file" ] || _log_file="$HOME/.rustdesk/log/rustdesk.log"
+    if [ "$USERS" -gt 0 ] && [ -f "$_log_file" ]; then
+        rd_codec=$(get_rustdesk_codec "$_log_file")
+        rd_fps=$(get_rustdesk_fps "$_log_file")
+        rd_bitrate=$(get_rustdesk_bitrate "$_log_file")
     fi
     local pipe_codec="${rd_codec:-none}"
-    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $pipe_codec"
+    local pipe_fps="${rd_fps:-}"
+    local pipe_bitrate="${rd_bitrate:-}"
+    line="$cur | $TEMP | $PING_STAT | $USERS | $RAM | $warning_count | $warning_text | $net | $combined_ip | $RUSTDESK_CONN_TYPE | $res | $rustdesk_direct | $pipe_codec | $pipe_fps | $pipe_bitrate"
     printf '%s\n' "$line" > "$STATUS_FILE"
 
     if [ "$format" = "json" ]; then
@@ -287,6 +293,8 @@ show_status() {
         printf '"resolution":"%s",' "$(json_escape "$res")"
         printf '"direct_address":"%s",' "$(json_escape "$rustdesk_direct")"
         printf '"codec":"%s",' "$(json_escape "$rd_codec")"
+        printf '"fps":"%s",' "$(json_escape "$rd_fps")"
+        printf '"bitrate_kbps":"%s",' "$(json_escape "$rd_bitrate")"
         printf '"status_file":"%s"' "$(json_escape "$STATUS_FILE")"
         printf '}\n'
     else

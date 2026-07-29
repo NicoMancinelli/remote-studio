@@ -179,13 +179,13 @@ show_rustdesk() {
             if [ -f "$log_file" ]; then
                 echo ""
                 echo "-- Recent codec/perf events (last 50 log lines) --"
-                # Extract the last mention of each key metric
-                local last50
-                last50=$(tail -n 50 "$log_file" 2>/dev/null)
+                # Extract the last mention of each key metric. The shared
+                # helpers below keep the extraction logic in one place;
+                # `res status` (show_status) reuses them too.
                 local codec fps bitrate
-                codec=$(printf '%s' "$last50" | grep -i 'codec'   | tail -1)
-                fps=$(printf '%s' "$last50"   | grep -i 'fps'     | tail -1)
-                bitrate=$(printf '%s' "$last50"| grep -i 'bitrate' | tail -1)
+                codec=$(get_rustdesk_codec "$log_file")
+                fps=$(get_rustdesk_fps "$log_file")
+                bitrate=$(get_rustdesk_bitrate "$log_file")
                 [ -n "$codec"   ] && echo "  Codec   : $codec"
                 [ -n "$fps"     ] && echo "  FPS     : $fps"
                 [ -n "$bitrate" ] && echo "  Bitrate : $bitrate"
@@ -198,6 +198,48 @@ show_rustdesk() {
             local nlines=${2:-50}
             journalctl -u rustdesk -n "$nlines" --no-pager 2>/dev/null || echo "journalctl unavailable."
             ;;
-        *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]"; ;;
+        *) echo "Usage: res rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]" ;;
     esac
+}
+
+# RustDesk log metric extractors shared by `res rustdesk status` and
+# `res status` (show_status). Each function takes the RustDesk log file
+# path and returns the last matching log line for that metric, or empty
+# if no match is found. The shapes are stable across rustdesk 1.4.x.
+#
+#   get_rustdesk_codec   "$log_file"   -> e.g. "VIDEO: H264"
+#   get_rustdesk_fps     "$log_file"   -> e.g. "FPS: 60"
+#   get_rustdesk_bitrate "$log_file"   -> e.g. "Bitrate: 2048 kbps"
+
+_rustdesk_log_last_match() {
+    # $1 = log file, $2 = case-insensitive pattern
+    local log_file="${1:-}" pattern="${2:-}"
+    [ -z "$log_file" ] || [ -z "$pattern" ] && return 0
+    [ -f "$log_file" ] || return 0
+    tail -n 50 "$log_file" 2>/dev/null | grep -i "$pattern" | tail -1 || true
+}
+
+get_rustdesk_codec() {
+    local line
+    line=$(_rustdesk_log_last_match "$1" 'codec')
+    # Extract the codec token (e.g. H264, H265, VP8, VP9, AV1) from the line.
+    printf '%s' "$line" | grep -oE '[A-Za-z0-9_-]+(264|265|VP[89]|AV1)[A-Za-z0-9_-]*' | head -1 || true
+}
+
+get_rustdesk_fps() {
+    local line
+    line=$(_rustdesk_log_last_match "$1" 'fps')
+    # Trim leading non-numeric noise so the applet panel rendered label
+    # stays compact. Examples that survive: "FPS: 60", "60 fps",
+    # "measured fps: 30.5".
+    printf '%s' "$line" | sed -nE 's/.*[Ff][Pp][Ss][^0-9]*([0-9]+(\.[0-9]+)?).*/\1/p' | head -1 || true
+}
+
+get_rustdesk_bitrate() {
+    local line
+    line=$(_rustdesk_log_last_match "$1" 'bitrate')
+    # Extract the numeric value and the unit (kbps/mbps) so the applet
+    # can present a single compact label. Examples: "Bitrate: 2048 kbps"
+    # leaves "2048 kbps" behind.
+    printf '%s' "$line" | sed -nE 's/.*[Bb]itrate[^0-9]*([0-9]+(\.[0-9]+)?[[:space:]]*(kbps|mbps|Kbps|Mbps)).*/\1/p' | head -1 || true
 }

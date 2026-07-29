@@ -344,3 +344,81 @@ TOML
     [ "$status" -eq 0 ]
     [[ "$output" == *"LAN mode active"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# RustDesk log metric extractors (show_status consumes these).
+# Used to put fps/bitrate in the applet status file and JSON.
+# ---------------------------------------------------------------------------
+
+@test "get_rustdesk_codec extracts H264/VP9/AV1 token from the last log line" {
+    local log="$BATS_TEST_TMPDIR/rustdesk.log"
+    cat > "$log" <<'EOF'
+[2026-07-29 10:00:01] Starting codec negotiation
+[2026-07-29 10:00:02] codec H264 selected
+[2026-07-29 10:00:03] something else
+EOF
+    run bash -c "
+        source '$ROOT_DIR/lib/services.sh'
+        get_rustdesk_codec '$log'
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "H264" ]
+}
+
+@test "get_rustdesk_fps extracts the numeric fps value" {
+    local log="$BATS_TEST_TMPDIR/rustdesk.log"
+    cat > "$log" <<'EOF'
+[2026-07-29 10:00:01] codec H264 selected
+[2026-07-29 10:00:02] FPS: 60 measured
+EOF
+    run bash -c "
+        source '$ROOT_DIR/lib/services.sh'
+        get_rustdesk_fps '$log'
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "60" ]
+}
+
+@test "get_rustdesk_bitrate extracts the value + unit" {
+    local log="$BATS_TEST_TMPDIR/rustdesk.log"
+    cat > "$log" <<'EOF'
+[2026-07-29 10:00:01] codec H264 selected
+[2026-07-29 10:00:02] Bitrate: 2048 kbps
+EOF
+    run bash -c "
+        source '$ROOT_DIR/lib/services.sh'
+        get_rustdesk_bitrate '$log'
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "2048 kbps" ]
+}
+
+@test "rustdesk log extractors return empty when no match is found" {
+    local log="$BATS_TEST_TMPDIR/rustdesk.log"
+    cat > "$log" <<'EOF'
+[2026-07-29 10:00:01] something unrelated
+EOF
+    run bash -c "
+        source '$ROOT_DIR/lib/services.sh'
+        printf 'codec=%s\n' \"\$(get_rustdesk_codec '$log')\"
+        printf 'fps=%s\n'    \"\$(get_rustdesk_fps '$log')\"
+        printf 'bitrate=%s\n' \"\$(get_rustdesk_bitrate '$log')\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "codec=
+fps=
+bitrate=" ]
+}
+
+@test "rustdesk log extractors return empty when the log file is missing" {
+    run bash -c "
+        source '$ROOT_DIR/lib/services.sh'
+        printf 'codec=%s\n' \"\$(get_rustdesk_codec '/no/such/path')\"
+        printf 'fps=%s\n'    \"\$(get_rustdesk_fps '/no/such/path')\"
+        printf 'bitrate=%s\n' \"\$(get_rustdesk_bitrate '/no/such/path')\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "codec=
+fps=
+bitrate=" ]
+}

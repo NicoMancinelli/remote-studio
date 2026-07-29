@@ -505,12 +505,21 @@ MyApplet.prototype = {
         let uc = status.users > 0 ? " 👥" + status.users : "";
         let uptime = this._getSessionUptime();
         let uptimeStr = (uptime > 60 && this._uptimeDisplay !== false) ? " ⏱" + this._formatUptime(uptime) : "";
-        let base = alert + dot + this._compactModeLabel(status.label) + uc + uptimeStr;
+        // FPS / bitrate snippet, only when a session is open and the metrics
+        // were actually seen in the log. Compact on purpose ("30f·2Mbps") so
+        // it fits in the panel label budget.
+        let perf = "";
+        if (status.users > 0 && (status.fps || status.bitrate)) {
+            let f = status.fps ? status.fps + "f" : "";
+            let b = status.bitrate ? status.bitrate : "";
+            perf = (f && b) ? " " + f + "·" + b : " " + (f || b);
+        }
+        let base = alert + dot + this._compactModeLabel(status.label) + uc + perf + uptimeStr;
 
         if (base.length > MAX_PANEL_LABEL) {
-            let reserved = alert.length + dot.length + uc.length + uptimeStr.length;
+            let reserved = alert.length + dot.length + uc.length + perf.length + uptimeStr.length;
             let maxLabel = Math.max(0, MAX_PANEL_LABEL - reserved);
-            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), maxLabel) + uc + uptimeStr;
+            base = alert + dot + this._ellipsize(this._compactModeLabel(status.label), maxLabel) + uc + perf + uptimeStr;
         }
         return base;
     },
@@ -536,6 +545,8 @@ MyApplet.prototype = {
                     resolution: (j.resolution || "N/A").toString(),
                     direct: (j.direct_address || "").toString().trim() || null,
                     codec: (j.codec || "").toString().trim(),
+                    fps: (j.fps || "").toString().trim(),
+                    bitrate: (j.bitrate_kbps || "").toString().trim(),
                     active_ips: j.active_ips || []
                 };
             } catch(e) {
@@ -559,6 +570,8 @@ MyApplet.prototype = {
             resolution: (p[10] || "N/A").trim(),
             direct: (p[11] || "").trim() || null,
             codec: ((p[12] || "").trim() === "none") ? "" : (p[12] || "").trim(),
+            fps: (p[13] || "").trim(),
+            bitrate: (p[14] || "").trim(),
             active_ips: []
         };
     },
@@ -629,7 +642,9 @@ MyApplet.prototype = {
                 "\nMode: "    + status.label      +
                 "\nRes: "     + status.resolution +
                 "\nPath: "    + status.connType   +
-                (status.codec ? "\nCodec: " + status.codec : "") +
+                (status.codec  ? "\nCodec: "  + status.codec  : "") +
+                (status.fps    ? "\nFPS: "     + status.fps    : "") +
+                (status.bitrate? "\nBitrate: " + status.bitrate : "") +
                 "\nIP: "      + status.ip         +
                 "\nDirect: "  + (status.direct || "N/A") +
                 "\nTemp: "    + status.temp       +

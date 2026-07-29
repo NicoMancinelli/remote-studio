@@ -16,7 +16,7 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 ## Auto-update & Distribution
 
 - ✅ Add `res update` command: pulls latest from the git origin and re-runs `install.sh install` in one step.
-- 🔴 Add a version check to `res doctor`: compare `res version` against the latest tag on GitHub (via `curl` + `gh api`) and report if an update is available.
+- ✅ Add a version check to `res doctor`: compare `res version` against the latest tag on GitHub (via `curl` + `gh api`) and report if an update is available. (Implemented as the `gh-release` row in `lib/diagnostics.sh`; `res doctor` reports `OK v${VERSION} is the latest release`.)
 - ✅ Add a GitHub Actions workflow that builds `remote-studio_X.Y_all.deb` and attaches it as a release asset automatically on every version tag push.
 - ✅ Publish a `curl | bash` one-liner install script (`install-remote-studio.sh`) that clones the repo and runs `install.sh install`.
 
@@ -35,20 +35,19 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 
 - ✅ Add `res rustdesk status`: show active codec, FPS, and bitrate by parsing RustDesk logs or `/proc` socket details.
 - ✅ Add `res rustdesk log [N]`: tail the RustDesk service log (replaces manual `journalctl -u rustdesk`).
-- 🟡 Surface session media details in status surfaces.
-  - ✅ `res status` / `res status --json`: include last observed codec when a session is active.
-  - ✅ Cinnamon applet: shows codec in the panel label and tooltip when available.
-  - 🔴 FPS and bitrate are still limited to `res rustdesk status`.
+- ✅ Surface session media details in status surfaces.
+  - ✅ `res status` / `res status --json`: include last observed codec, FPS, and bitrate when a session is active.
+  - ✅ Cinnamon applet: shows codec, FPS, and bitrate in the panel label (compact `30f·2Mbps`) and tooltip when a session is open.
 
 ---
 
 ## Tailscale
 
-- 🟡 Show exit node status in `res tailnet` and `res doctor` (active exit node name or "none").
+- ✅ Show exit node status in `res tailnet` and `res doctor` (active exit node name or "none").
   - ✅ `res doctor`: exit-node row added.
   - ✅ `res tailnet` TUI: "Show Exit Node Status" menu item exists.
   - ✅ `res tailnet exit-node` exposed as a direct CLI argument.
-  - 🔴 `res help` does not yet list `tailnet exit-node`.
+  - ✅ `res help` lists `tailnet exit-node` in the tailnet help line.
 - ✅ Add a warning to `get_warning_summary` when the machine has been offline from the tailnet (NoState/Starting/NoNetwork backend states).
 - ✅ Add `res tailnet hosts`: list all tailnet peers with their IPs and online/offline status (thin wrapper around `tailscale status`).
 
@@ -106,4 +105,6 @@ Status: ✅ Done · 🟡 Partial · 🔴 Not done
 - 🟡 Keep the applet compact under real panel width: status first, details in tooltip/menu.
 - ✅ Reduce duplicate quick-start docs into one maintained path (`docs/quickstart.md`; `docs/quick-start.md` is a compatibility pointer).
 - ✅ Add a stable status schema section so applet, tests, and future integrations do not infer fields from prose.
-- 🔴 Add visual regression screenshots for the applet menu after GJS changes.
+- 🟡 Add visual regression screenshots for the applet menu after GJS changes.
+  - ✅ Static reference screenshots committed (`docs/screenshots/{applet-menu,doctor,panel-label}.png`).
+  - 🔴 Automated visual regression (capture-on-build + pixel diff vs. baseline) is not yet wired. The static reference shots satisfy the docs use case; the regression use case needs an applet window rendered headlessly, which is non-trivial on a real Cinnamon panel.

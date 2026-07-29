@@ -132,7 +132,7 @@ show_help() {
     printf ""; echo "Actions:"
     echo "  speed, theme, night, caf, privacy, fix, reset, service, audio, keys"
     echo "  doctor, doctor-fix, self-test, init"
-    echo "  tailnet, tailnet peer <name>, tailnet hosts, tailnet doctor"
+    echo "  tailnet, tailnet peer <name>, tailnet hosts, tailnet doctor, tailnet exit-node"
     echo "  rustdesk [apply <preset>|backup|diff <preset>|status|log [lines]]"
     echo "  xorg [PATH], session [start|stop|status]"
     echo "  custom <W> <H> [scale]   Apply arbitrary resolution (offers save-as-profile)"

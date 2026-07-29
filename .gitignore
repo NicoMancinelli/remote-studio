@@ -11,3 +11,5 @@ dist/
 .vscode/
 /remote-studio
 /remote-studio.test
+
+.worktrees/

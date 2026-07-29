@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **`res status` exposes RustDesk FPS and bitrate.** Two new fields (`fps`,
+  `bitrate_kbps`) on the `--json` output and indices 13/14 on the
+  pipe-delimited status file. The applet parses them and shows them as a
+  compact snippet (`30f·2Mbps`) in the panel label and as separate lines
+  in the tooltip, only while a session is open. Helpers live in
+  `lib/services.sh` so `res rustdesk status` and `res status` agree.
+- **Help text lists `tailnet exit-node`.** The `res` help text advertised
+  every `tailnet` subcommand except `exit-node`, which the bash engine
+  already supported. Now the help text is in sync with the dispatch table.
+
+### Tests
+- 5 new bats tests in `test_services.bats` covering the three `*_log`
+  helpers (codec/fps/bitrate extraction), the no-match case, and the
+  missing-file case.
+
 ## [9.1] — 2026-07-22
 
 ### Added
