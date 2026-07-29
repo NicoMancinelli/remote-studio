@@ -70,7 +70,7 @@ func FindAndLoadConfig() (*Config, string, error) {
 // `cmd/version` reads this so `./res version` and `make release-check`
 // agree on the number; `pkg/diagnostics` uses it as the expected tag
 // when comparing against the latest GitHub release.
-var Version = "9.1"
+var Version = "10.0"
 
 func (c *Config) GetConfigValue(key string) string {
 	return c.Values[key]

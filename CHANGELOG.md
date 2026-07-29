@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [10.0] — 2026-07-29
 
 ### Added
 - **Socket activation on Linux.** The Python daemon now honors the
@@ -22,11 +22,18 @@
 - **Help text lists `tailnet exit-node`.** The `res` help text advertised
   every `tailnet` subcommand except `exit-node`, which the bash engine
   already supported. Now the help text is in sync with the dispatch table.
+- **`make ci-strict` local gate.** Runs `make ci` plus the Python daemon
+  tests, the Go tests (if Go is available), and an npm audit on the web
+  dashboard. Local-only — does NOT replace GitHub Actions, which still
+  gives cross-platform signal. See Makefile comments.
 
 ### Tests
 - 5 new bats tests in `test_services.bats` covering the three `*_log`
   helpers (codec/fps/bitrate extraction), the no-match case, and the
   missing-file case.
+- 10 new Python unit tests in `daemon/test_listen_fds.py` covering the
+  `sd_listen_fds(3)` protocol (env parsing, FD wrapping, fallback paths).
+- Total: 146 bats + 18 Python + e2e (unchanged from v9.1).
 
 ## [9.1] — 2026-07-22
 
@@ -139,7 +146,6 @@
 
 ## [8.1] — 2026-05-02
 
-
 ### Added
 - Cinnamon applet: `Gio.FileMonitor` file-watch replaces 600 ms polling loop (lower CPU)
 - Cinnamon applet: connection quality indicator in panel label (● Direct / ◐ Relayed)
@@ -175,7 +181,6 @@
 - DPI calculation uses `awk` instead of `bc` (removes `bc` as a runtime dependency)
 - `git fetch` in `show_doctor` uses `http.lowSpeedTime=3` and `http.connectTimeout=3` to avoid hanging on offline machines
 - README rewritten as a full project homepage (features, install, profiles table, CLI reference, architecture tree, configuration)
-
 ## [8.0] — current
 
 - **Session presets**: `res session start <profile>` applies display mode, performance mode, caffeine, and power profile in one step; `res session stop` restores the prior state
